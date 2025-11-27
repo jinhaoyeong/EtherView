@@ -1,6 +1,1 @@
-{
-  "redirects": [
-    { "source": "/index", "destination": "/" },
-    { "source": "/index.html", "destination": "/" }
-  ]
-}
+{}

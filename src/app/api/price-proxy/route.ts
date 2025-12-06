@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+export const runtime = 'nodejs'
 import { WHITELIST_MAINNET } from '@/lib/config/tokenWhitelist'
 import { cmcProvider } from '@/lib/providers/cmc'
 import { dexscreenerProvider } from '@/lib/providers/dexscreener'
@@ -116,6 +117,7 @@ export async function GET(req: NextRequest) {
   const url = new URL(req.url)
   const type = url.searchParams.get('type') || 'token'
   try {
+    
     if (type === 'whitelist') {
       const symbolsParam = url.searchParams.get('symbols') || ''
       const symbols = symbolsParam.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
@@ -226,11 +228,11 @@ export async function GET(req: NextRequest) {
           })
 
           // If we got most prices, break early
-          const coverage = Object.keys(result).length / addresses.length
-          if (coverage >= 0.6) {
-            console.log(`✅ ${provider.name} provided ${coverage * 100}% coverage`)
-            break
-          }
+      const coverage = Object.keys(result).length / addresses.length
+      if (coverage >= 0.6) {
+        console.log(`✅ ${provider.name} provided ${coverage * 100}% coverage`)
+        break
+      }
         } catch (error: unknown) {
           const message = error instanceof Error ? error.message : 'unknown error'
           console.error(`❌ ${provider.name} failed:`, message)
@@ -321,12 +323,13 @@ export async function GET(req: NextRequest) {
       if (!inCooldown('cryptocompare')) tasks.push(cryptocompareSpot('ETH'))
       let first: { usd: number; source: string } | null = null
       try { first = await Promise.any(tasks) } catch {}
-      if (first) return NextResponse.json({ ethereum: { usd: first.usd, source: first.source } })
+      if (first) {
+        return NextResponse.json({ ethereum: { usd: first.usd, source: first.source } })
+      }
       // If none succeeded, set cooldown briefly
       setCooldown('coinbase', 15); setCooldown('cryptocompare', 15)
       return NextResponse.json({ ethereum: { usd: 0, source: 'unavailable' } })
     }
-
     return NextResponse.json({}, { status: 400 })
   } catch (e: unknown) {
     const message = e instanceof Error ? e.message : 'proxy failed'

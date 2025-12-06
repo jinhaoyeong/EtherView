@@ -1,7 +1,7 @@
 "use client";
 
 import { useSettings } from './use-settings';
-import { EXCHANGE_RATES, CURRENCY_NAMES, convertCurrency } from '@/lib/currency-conversion';
+import { CURRENCY_NAMES, convertCurrency } from '@/lib/currency-conversion';
 
 export function useCurrencyFormatter() {
   const { settings } = useSettings();

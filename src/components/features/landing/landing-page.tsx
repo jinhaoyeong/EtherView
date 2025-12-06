@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,14 +9,13 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { DarkModeToggle } from "@/components/shared/dark-mode-toggle";
 import {
   AlertTriangle,
-  Brain,
   ArrowRight,
   Search,
-  CheckCircle,
-  Zap,
   Eye,
   BarChart3,
-  Newspaper
+  Newspaper,
+  ShieldCheck,
+  Activity
 } from "lucide-react";
 import { DocumentationModal } from "./documentation-modal";
 
@@ -27,6 +27,7 @@ export function LandingPage({ onWalletConnect }: LandingPageProps) {
   const [walletAddress, setWalletAddress] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const router = useRouter();
 
   // Ethereum address validation
   const isValidEthereumAddress = (address: string): boolean => {
@@ -72,24 +73,54 @@ export function LandingPage({ onWalletConnect }: LandingPageProps) {
 
   // Demo wallet addresses for testing
   const demoWallets = [
-    { address: "0x1234567890123456789012345678901234567890", label: "Demo Wallet - Mixed Portfolio" },
-    { address: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd", label: "Demo Wallet - High Risk" },
-    { address: "0xfedcbafedcbafedcbafedcbafedcbafedcba", label: "Demo Wallet - Safe Portfolio" }
+    { address: "0x1234567890123456789012345678901234567890", label: "Mixed Portfolio" },
+    { address: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd", label: "High Risk" },
+    { address: "0xfedcbafedcbafedcbafedcbafedcbafedcba", label: "Safe Portfolio" }
   ];
 
+  const demoWhaleAddress = "0x075e72a5edf65f0a5f44699c7654c1a76941ddc8";
+
+  const connectDemoWhale = async () => {
+    setError(null);
+    if (!isValidEthereumAddress(demoWhaleAddress)) {
+      setError("Demo whale address is invalid");
+      return;
+    }
+    try {
+      setIsLoading(true);
+      setWalletAddress(demoWhaleAddress);
+      await new Promise(resolve => setTimeout(resolve, 500));
+      onWalletConnect(demoWhaleAddress);
+      router.push("/whale");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to connect demo whale wallet");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-background via-background to-muted/20">
+    <div className="min-h-screen bg-background relative overflow-hidden">
+      {/* Background Elements */}
+      <div className="absolute inset-0 bg-grid-slate-900/[0.04] bg-[bottom_1px_center] dark:bg-grid-slate-400/[0.05] dark:bg-bottom dark:border-b dark:border-slate-100/5" />
+      <div className="absolute inset-0 bg-gradient-to-t from-background via-background/60 to-background/0 pointer-events-none" />
+      
+      <div className="absolute -top-40 -right-40 w-96 h-96 bg-primary/20 rounded-full blur-3xl opacity-30 dark:opacity-50 mix-blend-multiply dark:mix-blend-normal" />
+      <div className="absolute top-40 -left-20 w-72 h-72 bg-blue-500/20 rounded-full blur-3xl opacity-30 dark:opacity-50 mix-blend-multiply dark:mix-blend-normal" />
+
       {/* Header */}
-      <div className="absolute top-0 left-0 right-0 p-6">
+      <div className="absolute top-0 left-0 right-0 p-6 z-50">
         <div className="max-w-7xl mx-auto flex items-center justify-between">
           <div className="flex items-center space-x-3">
-            <div className="h-8 w-9 bg-primary rounded-br-lg rounded-tr-sm rounded-tl-lg rounded-bl-sm flex-shrink-0"></div>
-            <span className="text-xl font-bold text-foreground">EtherView</span>
+            <div className="h-8 w-8 bg-primary rounded-lg flex items-center justify-center shadow-lg shadow-primary/20">
+              <Eye className="h-5 w-5 text-primary-foreground" />
+            </div>
+            <span className="text-xl font-bold tracking-tight text-foreground">EtherView</span>
           </div>
-          <div className="flex items-center space-x-3">
+          <div className="flex items-center space-x-4">
             <DocumentationModal
               trigger={
-                <Button variant="ghost" size="sm">
+                <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground font-medium">
                   Documentation
                 </Button>
               }
@@ -100,191 +131,150 @@ export function LandingPage({ onWalletConnect }: LandingPageProps) {
       </div>
 
       {/* Main Content */}
-      <div className="flex items-center justify-center min-h-screen px-4 pt-24">
-        <div className="w-full max-w-6xl">
+      <div className="relative z-10 flex flex-col items-center justify-center min-h-screen px-4 py-20">
+        <div className="w-full max-w-5xl mx-auto text-center space-y-10">
+          
           {/* Hero Section */}
-          <div className="text-center mb-16">
-            <h1 className="text-5xl md:text-6xl font-bold text-foreground mb-6">
-              Ethereum
-              <span className="text-primary"> Intelligence</span> Dashboard
+          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
+            <div className="inline-flex items-center rounded-full border border-primary/20 bg-primary/5 px-4 py-1.5 text-sm font-medium text-primary mb-6">
+              <span className="flex h-2 w-2 rounded-full bg-primary mr-2 animate-pulse"></span>
+              v2.0 Now Live
+            </div>
+            <h1 className="text-5xl md:text-7xl lg:text-8xl font-bold tracking-tight text-foreground">
+              Master Your <br />
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-blue-600">
+                Ethereum Portfolio
+              </span>
             </h1>
-
-            <p className="text-xl text-muted-foreground mb-8 max-w-3xl mx-auto leading-relaxed">
-              Advanced AI-powered wallet analytics with real-time scam detection.
-              Analyze any Ethereum portfolio for risks, track whale movements,
-              and get actionable insights.
+            <p className="text-xl md:text-2xl text-muted-foreground max-w-3xl mx-auto leading-relaxed">
+              Real-time analytics, AI-powered scam detection, and whale tracking. 
+              The most powerful way to visualize your on-chain activity.
             </p>
-
-            {/* Stats */}
-            <div className="flex items-center justify-center space-x-12 mb-12">
-              <div className="text-center">
-                <div className="text-3xl font-bold text-primary">10M+</div>
-                <div className="text-sm text-muted-foreground">Tokens Analyzed</div>
-              </div>
-              <div className="text-center">
-                <div className="text-3xl font-bold text-green-500">99.9%</div>
-                <div className="text-sm text-muted-foreground">Detection Accuracy</div>
-              </div>
-              <div className="text-center">
-                <div className="text-3xl font-bold text-orange-500">24/7</div>
-                <div className="text-sm text-muted-foreground">Real-time Monitoring</div>
-              </div>
-            </div>
           </div>
 
-          {/* Main Input Card */}
-          <Card className="p-8 shadow-2xl border-border/50 bg-card/95 backdrop-blur-sm mb-12">
-            <form onSubmit={handleSubmit} className="space-y-6">
-              <div className="text-center mb-6">
-                <h2 className="text-2xl font-semibold text-foreground mb-2">
-                  Analyze Any Ethereum Wallet
-                </h2>
-                <p className="text-muted-foreground">
-                  Enter a wallet address to reveal comprehensive portfolio analysis and risk assessment
-                </p>
-              </div>
-
-              <div className="relative">
-                <Search className="absolute left-4 top-1/2 transform -translate-y-1/2 text-muted-foreground h-5 w-5" />
-                <Input
-                  type="text"
-                  placeholder="Enter Ethereum wallet address (0x...)"
-                  value={walletAddress}
-                  onChange={handleInputChange}
-                  className="pl-12 pr-4 py-4 text-base h-14 border-border/50 bg-muted/50 focus:border-primary focus:ring-primary/20"
-                  disabled={isLoading}
-                />
-              </div>
-
-              {error && (
-                <Alert variant="destructive">
-                  <AlertTriangle className="h-4 w-4" />
-                  <AlertDescription>{error}</AlertDescription>
-                </Alert>
-              )}
-
-              <Button
-                type="submit"
-                size="lg"
-                className="w-full h-14 text-base font-medium"
-                disabled={isLoading || !walletAddress.trim()}
-              >
-                {isLoading ? (
-                  <>
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-primary-foreground mr-3"></div>
-                    Analyzing Wallet...
-                  </>
-                ) : (
-                  <>
-                    Analyze Portfolio
-                    <ArrowRight className="ml-2 h-5 w-5" />
-                  </>
-                )}
-              </Button>
-            </form>
-
-            {/* Demo Wallets */}
-            <div className="mt-8 pt-8 border-t border-border/50">
-              <div className="text-center mb-4">
-                <span className="text-sm text-muted-foreground">Try our demo wallets:</span>
-              </div>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                {demoWallets.map((demo, index) => (
+          {/* Main Input Section */}
+          <div className="w-full max-w-3xl mx-auto mt-16 animate-in fade-in slide-in-from-bottom-8 duration-1000 delay-100">
+            <div className="relative group">
+              <div className="absolute -inset-1 bg-gradient-to-r from-primary to-blue-600 rounded-2xl blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200"></div>
+              <Card className="relative p-3 bg-card/95 backdrop-blur-xl border-border/50 shadow-2xl rounded-2xl">
+                <form onSubmit={handleSubmit} className="flex flex-col md:flex-row gap-3">
+                  <div className="relative flex-grow">
+                    <Search className="absolute left-5 top-1/2 transform -translate-y-1/2 text-muted-foreground h-6 w-6" />
+                    <Input
+                      type="text"
+                      placeholder="Enter ETH address (0x...)"
+                      value={walletAddress}
+                      onChange={handleInputChange}
+                      className="pl-14 pr-4 h-16 text-lg border-transparent bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-muted-foreground/50"
+                      disabled={isLoading}
+                    />
+                  </div>
                   <Button
-                    key={index}
-                    variant="outline"
-                    size="sm"
-                    className="text-xs h-auto py-3 px-3 border-border/50 bg-muted/30 hover:bg-muted/50"
-                    onClick={() => setWalletAddress(demo.address)}
-                    disabled={isLoading}
+                    type="submit"
+                    size="lg"
+                    className="h-16 px-10 text-lg font-medium rounded-xl shadow-lg hover:shadow-primary/25 transition-all duration-300"
+                    disabled={isLoading || !walletAddress.trim()}
                   >
-                    <div className="text-left">
-                      <div className="font-medium text-foreground truncate">
-                        {demo.address.slice(0, 10)}...{demo.address.slice(-8)}
+                    {isLoading ? (
+                      <div className="flex items-center gap-2">
+                        <div className="animate-spin rounded-full h-5 w-5 border-2 border-primary-foreground/30 border-t-primary-foreground"></div>
+                        <span>Scanning...</span>
                       </div>
-                      <div className="text-muted-foreground truncate">
-                        {demo.label}
+                    ) : (
+                      <div className="flex items-center gap-2">
+                        <span>Analyze</span>
+                        <ArrowRight className="h-5 w-5" />
                       </div>
-                    </div>
+                    )}
                   </Button>
-                ))}
-              </div>
+                </form>
+              </Card>
             </div>
-          </Card>
 
-          {/* Features Grid */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-16">
-            <Card className="p-6 border-border/50 bg-card/80 backdrop-blur-sm hover:bg-card/90 transition-colors">
-              <div className="flex items-center space-x-3 mb-4">
-                <div className="p-2 bg-red-500/10 rounded-lg">
-                  <AlertTriangle className="h-6 w-6 text-red-500" />
-                </div>
-                <h3 className="text-lg font-semibold">Scam Detection</h3>
-              </div>
-              <p className="text-muted-foreground leading-relaxed">
-                AI-powered detection of honeypots, rug pulls, and malicious token contracts
-                with detailed evidence and risk scoring.
-              </p>
-            </Card>
+            {error && (
+              <Alert variant="destructive" className="mt-6 animate-in fade-in slide-in-from-top-2">
+                <AlertTriangle className="h-5 w-5" />
+                <AlertDescription className="text-base">{error}</AlertDescription>
+              </Alert>
+            )}
 
-            <Card className="p-6 border-border/50 bg-card/80 backdrop-blur-sm hover:bg-card/90 transition-colors">
-              <div className="flex items-center space-x-3 mb-4">
-                <div className="p-2 bg-blue-500/10 rounded-lg">
-                  <BarChart3 className="h-6 w-6 text-blue-500" />
-                </div>
-                <h3 className="text-lg font-semibold">Portfolio Analytics</h3>
-              </div>
-              <p className="text-muted-foreground leading-relaxed">
-                Comprehensive portfolio analysis with performance tracking,
-                asset allocation, and valuation insights.
-              </p>
-            </Card>
-
-            <Card className="p-6 border-border/50 bg-card/80 backdrop-blur-sm hover:bg-card/90 transition-colors">
-              <div className="flex items-center space-x-3 mb-4">
-                <div className="p-2 bg-green-500/10 rounded-lg">
-                  <Eye className="h-6 w-6 text-green-500" />
-                </div>
-                <h3 className="text-lg font-semibold">Whale Tracking</h3>
-              </div>
-              <p className="text-muted-foreground leading-relaxed">
-                Monitor large wallet movements and track whale activity
-                across the Ethereum network.
-              </p>
-            </Card>
-
-            <Card className="p-6 border-border/50 bg-card/80 backdrop-blur-sm hover:bg-card/90 transition-colors">
-              <div className="flex items-center space-x-3 mb-4">
-                <div className="p-2 bg-purple-500/10 rounded-lg">
-                  <Newspaper className="h-6 w-6 text-purple-500" />
-                </div>
-                <h3 className="text-lg font-semibold">News Sentiment</h3>
-              </div>
-              <p className="text-muted-foreground leading-relaxed">
-                Real-time news analysis and sentiment tracking for market insights,
-                influencer monitoring, and trend predictions.
-              </p>
-            </Card>
+          {/* Quick Access Pills */}
+          <div className="mt-8 flex flex-wrap items-center justify-center gap-3 animate-in fade-in duration-1000 delay-200">
+            <span className="text-base text-muted-foreground mr-2">Try demo:</span>
+            {demoWallets.map((demo, index) => (
+              <button
+                key={index}
+                onClick={() => setWalletAddress(demo.address)}
+                className="px-4 py-1.5 text-sm font-medium rounded-full bg-muted/50 hover:bg-muted border border-transparent hover:border-primary/20 transition-all text-muted-foreground hover:text-foreground"
+              >
+                {demo.label}
+              </button>
+            ))}
+            <button
+              onClick={connectDemoWhale}
+              className="px-4 py-1.5 text-sm font-medium rounded-full bg-muted/50 hover:bg-muted border border-transparent hover:border-primary/20 transition-all text-muted-foreground hover:text-foreground"
+              title="Recommended demo wallet for full feature coverage"
+            >
+              Best Demo: Whale Wallet (Full Features)
+            </button>
+          </div>
           </div>
 
-          {/* Trust Indicators */}
-          <div className="text-center">
-            <div className="inline-flex items-center space-x-8 text-muted-foreground">
-              <div className="flex items-center space-x-2">
-                <CheckCircle className="h-5 w-5 text-green-500" />
-                <span className="text-sm">Bank-level Security</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Zap className="h-5 w-5 text-orange-500" />
-                <span className="text-sm">Lightning Fast</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <Brain className="h-5 w-5 text-primary" />
-                <span className="text-sm">AI-Powered</span>
-              </div>
+          {/* Stats Row */}
+          <div className="grid grid-cols-3 gap-12 max-w-4xl mx-auto pt-12 animate-in fade-in duration-1000 delay-300">
+            <div className="text-center space-y-2">
+              <div className="text-4xl font-bold text-foreground">10M+</div>
+              <div className="text-sm text-muted-foreground uppercase tracking-wider font-medium">Tokens Analyzed</div>
+            </div>
+            <div className="text-center space-y-2 border-x border-border/50">
+              <div className="text-4xl font-bold text-foreground">99.9%</div>
+              <div className="text-sm text-muted-foreground uppercase tracking-wider font-medium">Accuracy</div>
+            </div>
+            <div className="text-center space-y-2">
+              <div className="text-4xl font-bold text-foreground">24/7</div>
+              <div className="text-sm text-muted-foreground uppercase tracking-wider font-medium">Real-time Data</div>
             </div>
           </div>
         </div>
+
+        {/* Features Strip */}
+        <div className="w-full max-w-7xl mx-auto mt-20 pt-10 border-t border-border/40 animate-in fade-in duration-1000 delay-500">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
+            <div className="flex flex-col items-center text-center p-6 hover:bg-muted/30 rounded-2xl transition-colors">
+              <div className="p-3 bg-red-500/10 rounded-xl mb-4 text-red-500">
+                <ShieldCheck className="h-8 w-8" />
+              </div>
+              <h3 className="font-bold mb-2 text-lg">Scam Detection</h3>
+              <p className="text-sm text-muted-foreground leading-relaxed">Instantly identify honeypots and malicious contracts.</p>
+            </div>
+            <div className="flex flex-col items-center text-center p-6 hover:bg-muted/30 rounded-2xl transition-colors">
+              <div className="p-3 bg-blue-500/10 rounded-xl mb-4 text-blue-500">
+                <BarChart3 className="h-8 w-8" />
+              </div>
+              <h3 className="font-bold mb-2 text-lg">Deep Analytics</h3>
+              <p className="text-sm text-muted-foreground leading-relaxed">Full breakdown of PnL, gas fees, and asset allocation.</p>
+            </div>
+            <div className="flex flex-col items-center text-center p-6 hover:bg-muted/30 rounded-2xl transition-colors">
+              <div className="p-3 bg-green-500/10 rounded-xl mb-4 text-green-500">
+                <Activity className="h-8 w-8" />
+              </div>
+              <h3 className="font-bold mb-2 text-lg">Whale Tracking</h3>
+              <p className="text-sm text-muted-foreground leading-relaxed">Monitor smart money to spot trends early.</p>
+            </div>
+            <div className="flex flex-col items-center text-center p-6 hover:bg-muted/30 rounded-2xl transition-colors">
+              <div className="p-3 bg-purple-500/10 rounded-xl mb-4 text-purple-500">
+                <Newspaper className="h-8 w-8" />
+              </div>
+              <h3 className="font-bold mb-2 text-lg">Market Sentiment</h3>
+              <p className="text-sm text-muted-foreground leading-relaxed">AI-driven news analysis to gauge market mood.</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <footer className="w-full text-center py-8 text-sm text-muted-foreground animate-in fade-in duration-1000 delay-700">
+          <p>© {new Date().getFullYear()} EtherView. All rights reserved.</p>
+        </footer>
       </div>
     </div>
   );

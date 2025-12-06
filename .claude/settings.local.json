@@ -9,7 +9,10 @@
       "Bash(curl:*)",
       "Bash(tail:*)",
       "Bash(ls:*)",
-      "Bash(dir \"C:\\Users\\User\\OneDrive\\Desktop\\etherview2 (overview and news sentiment checkpoint)\\src\\hooks\")"
+      "Bash(dir \"C:\\Users\\User\\OneDrive\\Desktop\\etherview2 (overview and news sentiment checkpoint)\\src\\hooks\")",
+      "Bash(echo:*)",
+      "Bash(node:*)",
+      "WebFetch(domain:docs.z.ai)"
     ],
     "deny": [],
     "ask": []

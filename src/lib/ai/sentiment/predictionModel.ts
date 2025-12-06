@@ -55,7 +55,7 @@ export interface AggregatedMarketSentiment {
 }
 
 export class PredictionModel {
-  private readonly ENTITY_INFLUENCE_WEIGHTS = {
+  private readonly ENTITY_INFLUENCE_WEIGHTS: Record<string, number> = {
     // Highest impact entities
     'federal reserve': 1.0,
     'fed': 0.9,
@@ -119,7 +119,7 @@ export class PredictionModel {
       confidence,
       reasoning,
       timeHorizon: contextualPrediction.timeHorizon,
-      targetPrice: this.generateTargetPrice(contextualPrediction, aggregatedSentiment),
+      targetPrice: this.generateTargetPrice({ confidence }, aggregatedSentiment),
       keyFactors,
       riskFactors,
       marketSignals
@@ -297,7 +297,10 @@ export class PredictionModel {
     return { trend, timeHorizon };
   }
 
-  private applyMarketContext(basePrediction: any, sentiment: AggregatedMarketSentiment): any {
+  private applyMarketContext(
+    basePrediction: { trend: MarketPrediction['trend']; timeHorizon: MarketPrediction['timeHorizon'] },
+    sentiment: AggregatedMarketSentiment
+  ): { trend: MarketPrediction['trend']; timeHorizon: MarketPrediction['timeHorizon'] } {
     // Apply market-specific heuristics
     const { segmentScores, entityAnalysis, sourceDistribution } = sentiment;
 
@@ -313,7 +316,11 @@ export class PredictionModel {
     if (sourceDistribution.highTrust > 0.7) {
       // Confidence is higher, but trend might be more conservative
       if (Math.abs(sentiment.overallIndex) > 0.4) {
-        basePrediction.trend = basePrediction.trend.replace('Strongly ', '');
+        basePrediction.trend = basePrediction.trend === 'Strongly Bullish'
+          ? 'Bullish'
+          : basePrediction.trend === 'Strongly Bearish'
+          ? 'Bearish'
+          : basePrediction.trend;
       }
     }
 
@@ -387,8 +394,9 @@ export class PredictionModel {
 
   private generatePredictionReasoning(
     sentiment: AggregatedMarketSentiment,
-    prediction: any
+    _prediction: unknown
   ): string[] {
+    void _prediction;
     const reasoning: string[] = [];
 
     // Overall sentiment reasoning
@@ -526,7 +534,7 @@ export class PredictionModel {
   }
 
   private generateTargetPrice(
-    prediction: any,
+    prediction: { confidence: number },
     sentiment: AggregatedMarketSentiment
   ): MarketPrediction['targetPrice'] | undefined {
     // Only generate target prices for high-confidence predictions
@@ -542,7 +550,7 @@ export class PredictionModel {
 
     // Apply segment-specific adjustments
     let ethMultiplier = 1;
-    let btcMultiplier = 1;
+    const btcMultiplier = 1;
 
     if (sentiment.segmentScores.crypto > 0.3) {
       ethMultiplier *= 1.2; // Crypto-specific news has more impact on ETH

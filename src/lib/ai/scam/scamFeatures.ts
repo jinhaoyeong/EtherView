@@ -30,7 +30,8 @@ export interface TokenFeatures {
   communityReports: number
 }
 
-export async function extractFeatures(token: TokenInfo, userAddress?: string): Promise<TokenFeatures> {
+export async function extractFeatures(token: TokenInfo, _userAddress?: string): Promise<TokenFeatures> {
+  void _userAddress;
   const name = (token.name || '').toLowerCase()
   const symbol = (token.symbol || '')
   const hasURL = /https?:\/\/|www\.|\.(com|org|net|io|app|xyz|finance|tech|crypto)\b/i.test(name)

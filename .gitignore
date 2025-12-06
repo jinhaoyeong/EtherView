@@ -42,3 +42,29 @@ next-env.d.ts
  
 # Windows reserved device file accidentally created
 nul
+
+/.claude/
+/.figma/
+/.serena/
+/.trae/
+/docs/
+/EtherView Documentation (Must Follow)/
+/5-article-cost-summary.js
+/CLAUDE_IMPLEMENTATION_VERIFICATION.md
+/CLAUDE.md
+/ETHERVIEW_APPLICATION_JOURNEY.md
+/metricsguide.txt
+/ScamDetectionGuide.txt
+
+/.claude/
+/.figma/
+/.serena/
+/.trae/
+/docs/
+/EtherView Documentation (Must Follow)/
+/5-article-cost-summary.js
+/CLAUDE_IMPLEMENTATION_VERIFICATION.md
+/CLAUDE.md
+/ETHERVIEW_APPLICATION_JOURNEY.md
+/metricsguide.txt
+/ScamDetectionGuide.txt

@@ -12,7 +12,6 @@ export interface APIResponse<T> {
 }
 
 export interface RateLimiter {
-  requests: number;
   window: number; // in milliseconds
   maxRequests: number;
 }

@@ -171,7 +171,7 @@ class DexscreenerProvider {
   /**
    * Calculate confidence based on liquidity and other factors
    */
-  private calculateConfidence(pair: DexPair, tokenAddress: string): number {
+  private calculateConfidence(pair: DexPair): number {
     let confidence = 0.5; // Base confidence
 
     const liquidity = pair.liquidity.usd;
@@ -228,7 +228,7 @@ class DexscreenerProvider {
       dexName: pair.dexId,
       chainId: pair.chainId,
       source: 'dexscreener' as const,
-      confidence: this.calculateConfidence(pair, tokenAddress)
+      confidence: this.calculateConfidence(pair)
     };
   }
 

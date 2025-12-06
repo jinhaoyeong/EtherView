@@ -34,7 +34,7 @@ export async function GET(request: NextRequest) {
           'Accept': 'application/json',
           'x-api-key': apiKey
         },
-        signal: AbortSignal.timeout(10000)
+        signal: AbortSignal.timeout(15000)
       })
       if (!res.ok) {
         continue

@@ -37,6 +37,25 @@ export function Providers({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
+  useEffect(() => {
+    const onUnhandledRejection = (event: PromiseRejectionEvent) => {
+      const reason: unknown = (event && 'reason' in event) ? event.reason : undefined;
+      const message = reason instanceof Error ? reason.message : typeof reason === 'string' ? reason : JSON.stringify(reason ?? 'Unknown rejection');
+      console.error('Unhandled promise rejection:', message);
+      try { event.preventDefault(); } catch {}
+    };
+    const onWindowError = (event: ErrorEvent) => {
+      const message = event?.error?.message || event?.message || 'Unknown error';
+      console.error('Window error:', message);
+    };
+    window.addEventListener('unhandledrejection', onUnhandledRejection);
+    window.addEventListener('error', onWindowError);
+    return () => {
+      window.removeEventListener('unhandledrejection', onUnhandledRejection);
+      window.removeEventListener('error', onWindowError);
+    };
+  }, []);
+
   return (
     <QueryClientProvider client={queryClient}>
       <WalletProvider>

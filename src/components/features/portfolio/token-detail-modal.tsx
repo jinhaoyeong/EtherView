@@ -31,7 +31,7 @@ interface TokenDetailModalProps {
     verified: boolean;
     hasNoPriceData?: boolean;
     riskLevel?: 'low' | 'medium' | 'high';
-    scamResult?: any;
+    scamResult?: unknown;
     priceSource?: string;
     confidence?: number;
   } | null;
@@ -56,7 +56,7 @@ interface TokenStats {
 export function TokenDetailModal({ isOpen, onClose, token }: TokenDetailModalProps) {
   const [tokenStats, setTokenStats] = useState<TokenStats | null>(null);
   const [loading, setLoading] = useState(false);
-  const [copied, setCopied] = useState(false);
+  
 
   const fetchTokenDetails = useCallback(async (tokenAddress: string) => {
     if (!token) {
@@ -130,15 +130,7 @@ export function TokenDetailModal({ isOpen, onClose, token }: TokenDetailModalPro
     }
   }, [isOpen, token, fetchTokenDetails]);
 
-  const copyToClipboard = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch (error) {
-      console.error('Failed to copy:', error);
-    }
-  };
+  
 
   if (!token) return null;
 
@@ -158,13 +150,7 @@ export function TokenDetailModal({ isOpen, onClose, token }: TokenDetailModalPro
     }).format(value);
   };
 
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-    });
-  };
+  
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>

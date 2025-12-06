@@ -1,5 +1,104 @@
 # CLAUDE.md
 
+## Updated Folder Structure (Clean Slate)
+
+```
+src/
+  app/
+    api/
+      analyze-wallet/route.ts
+      etherscan-proxy/route.ts
+      price-proxy/route.ts
+      debank-proxy/route.ts
+      covalent-proxy/route.ts
+      news-sentiment/route.ts
+      metrics/route.ts
+      token-stats/route.ts
+      health/route.ts
+    scam/page.tsx
+    whale/page.tsx
+    news/page.tsx
+    transactions/page.tsx
+    settings/page.tsx
+    privacy/page.tsx
+    index/page.tsx
+  components/
+    layout/
+      dashboard-layout.tsx
+      header.tsx
+    ui/
+      button.tsx
+      card.tsx
+      badge.tsx
+      table.tsx
+      input.tsx
+    features/
+      portfolio/
+        enhanced-overview.tsx
+        token-detail-modal.tsx
+      landing/
+        documentation-modal.tsx
+    error-boundary.tsx
+  contexts/
+    wallet-context.tsx
+  hooks/
+    use-currency-formatter.ts
+    usePerformanceMonitor.tsx
+  lib/
+    api/
+      wallet.ts
+    ai/
+      scam/
+        scamEngine.ts
+      whale/
+        whaleEngine.ts
+      sentiment/
+        sentimentAnalyzer.ts
+      shared/
+        fetcher.ts
+        api.ts
+    eth/
+      multicall.ts
+    providers/
+      cmc.ts
+      dexscreener.ts
+    config/
+      tokenWhitelist.ts
+    metrics.ts
+    theme-manager.ts
+
+metrics/
+  metrics-overview.md
+  metricsguide.txt
+  labels/
+    sentiment.jsonl
+    scam.jsonl
+    whale.jsonl
+    prices.jsonl
+
+package.json
+tsconfig.json
+next.config.js
+```
+
+## Clean-up Policy
+
+- Removed file-based metrics snapshots and HTML report generation
+- Removed diagnostic and test utilities from `src/lib/diagnostic/`
+- Kept labeled datasets in `metrics/labels/` for reporting and evaluation
+- Metrics are in-memory only, gated by `METRICS_ENABLED`; no disk writes
+
+## Measurement Plan (per metricsguide.txt)
+
+- Detection (scam, whale, sentiment): precision/recall/F1, PR curves, confusion matrix
+- Fetching (prices, balances, transactions): coverage, latency, freshness, error/timeout rate, cache hit rate, MAPE for prices
+
+## Viewing Metrics
+
+- Enable with `METRICS_ENABLED=true`
+- Read snapshot at `GET /api/metrics`
+
+
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## Project Overview

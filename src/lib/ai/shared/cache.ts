@@ -11,7 +11,7 @@ interface CacheEntry<T> {
 }
 
 export class AICache {
-  private cache = new Map<string, CacheEntry<any>>();
+  private cache = new Map<string, CacheEntry<unknown>>();
   private defaultTTL = 5 * 60 * 1000; // 5 minutes default
 
   set<T>(key: string, data: T, ttl?: number): void {
@@ -114,7 +114,7 @@ setInterval(() => {
 }, 5 * 60 * 1000);
 
 // Export convenience functions for specific cache types
-export const createCacheKey = (type: string, params: Record<string, any>): string => {
+export const createCacheKey = (type: string, params: Record<string, unknown>): string => {
   const sortedParams = Object.keys(params)
     .sort()
     .map(key => `${key}:${params[key]}`)
@@ -128,5 +128,6 @@ export const CacheKeys = {
   SENTIMENT_ANALYSIS: (timeframe?: string) => createCacheKey('sentiment', { timeframe: timeframe || '24h' }),
   WHALE_ANALYSIS: (walletAddress?: string) => createCacheKey('whale', { wallet: walletAddress || 'global' }),
   TOKEN_PRICE: (tokenAddress: string, timestamp: number) => createCacheKey('price', { address: tokenAddress.toLowerCase(), timestamp }),
-  HOLDER_DATA: (tokenAddress: string) => createCacheKey('holders', { address: tokenAddress.toLowerCase() })
+  HOLDER_DATA: (tokenAddress: string) => createCacheKey('holders', { address: tokenAddress.toLowerCase() }),
+  NEWS_AGGREGATION: (type?: string) => createCacheKey('news', { type: type || 'comprehensive' })
 };

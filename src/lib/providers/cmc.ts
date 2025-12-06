@@ -152,7 +152,7 @@ class CoinMarketCapProvider {
    * Normalize CMC response to our format
    */
   private normalizeCMCData(cmcData: { [key: string]: CMCQuote }): NormalizedCMCQuote[] {
-    return Object.values(cmcData).map(item => ({
+    return Object.values(cmcData).map((item: CMCQuote) => ({
       symbol: item.symbol,
       name: item.name,
       price: item.quote.USD.price,
@@ -298,13 +298,13 @@ class CoinMarketCapProvider {
         throw new Error(`CMC API error: ${response.status} ${response.statusText}`);
       }
 
-      const data = await response.json();
+      const data: { status: CMCResponse['status']; data: CMCQuote[] } = await response.json();
 
       if (data.status.error_code !== 0) {
         throw new Error(`CMC API error: ${data.status.error_message}`);
       }
 
-      const normalizedQuotes: NormalizedCMCQuote[] = data.data.map((item: any) => ({
+      const normalizedQuotes: NormalizedCMCQuote[] = data.data.map((item: CMCQuote) => ({
         symbol: item.symbol,
         name: item.name,
         price: item.quote.USD.price,

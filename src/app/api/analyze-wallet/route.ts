@@ -1,17 +1,19 @@
 // Next.js API Route for Wallet Analysis
 import { NextRequest, NextResponse } from 'next/server';
+export const runtime = 'nodejs'
 import { WalletAPI } from '@/lib/api/wallet';
+import type { Transaction } from '@/lib/api/wallet';
 
 interface TokenInfo {
-  symbol: string;
-  name: string;
-  address: string;
-  decimals: number;
-  balance: string;
-  priceUSD: number;
-  valueUSD: number;
-  verified: boolean;
-  hasNoPriceData: boolean;
+  symbol?: string;
+  name?: string;
+  address?: string;
+  decimals?: number;
+  balance?: string;
+  priceUSD?: number;
+  valueUSD?: number;
+  verified?: boolean;
+  hasNoPriceData?: boolean;
   chain?: string;
 }
 
@@ -103,11 +105,16 @@ export async function POST(request: NextRequest) {
   try {
     let walletAddress: string | undefined;
     let timeRange: string = '24h';
+    let providedTokens: TokenInfo[] = [];
     try {
       if (request.headers.get('content-type')?.includes('application/json')) {
         const body = await request.json();
         walletAddress = body?.walletAddress;
         timeRange = body?.timeRange || '24h';
+        const bodyTokens = Array.isArray(body?.tokens) ? body.tokens : [];
+        if (bodyTokens.length > 0) {
+          providedTokens = bodyTokens as TokenInfo[];
+        }
       }
     } catch {
       // Fallback to query params when no/invalid JSON body
@@ -128,7 +135,7 @@ export async function POST(request: NextRequest) {
     // ⚡ INSTANT CACHE CHECK: Return cached data if available
     const cacheKey = `wallet_analysis_${walletAddress}`;
     const cachedAnalysis = analysisCache.get(cacheKey);
-    if (cachedAnalysis && (Date.now() - cachedAnalysis.timestamp) < 30000) { // 30 second cache
+    if (cachedAnalysis && (Date.now() - cachedAnalysis.timestamp) < 30000 && (providedTokens.length === 0)) { // 30 second cache
       console.log('⚡ INSTANT: Returning cached analysis (', Math.round((Date.now() - cachedAnalysis.timestamp) / 1000), 's old)');
       return NextResponse.json({
         success: true,
@@ -146,16 +153,26 @@ export async function POST(request: NextRequest) {
     const startTime = performance.now();
 
     // Parallel fetch of basic data with shorter timeouts
-    const [ethBalance, ethPrice, overviewData] = await Promise.allSettled([
+    const [ethBalance, ethPrice] = await Promise.allSettled([
       fetchETHBalance(walletAddress),
-      fetchETHPrice(),
-      WalletAPI.getPortfolioTokens(walletAddress)
+      fetchETHPrice()
     ]);
+
+    const cachedTokens = WalletAPI.getCachedPortfolioTokens(walletAddress);
+    let initialTokens = (Array.isArray(providedTokens) && providedTokens.length > 0)
+      ? providedTokens
+      : (Array.isArray(cachedTokens) ? cachedTokens : []);
+    if (initialTokens.length === 0) {
+      try {
+        initialTokens = await WalletAPI.getPortfolioTokens(walletAddress);
+      } catch {
+        initialTokens = [];
+      }
+    }
 
     const ethBalanceValue = ethBalance.status === 'fulfilled' ? ethBalance.value : '0';
     const ethPriceValue = ethPrice.status === 'fulfilled' ? ethPrice.value.price : null;
     const ethPriceSource = ethPrice.status === 'fulfilled' ? ethPrice.value.source : 'unavailable';
-    const initialTokens = overviewData.status === 'fulfilled' ? (overviewData.value || []) : [];
     const portfolioData = {
       totalValueUSD: 0,
       ethBalance: ethBalanceValue,
@@ -166,12 +183,10 @@ export async function POST(request: NextRequest) {
     console.log('⚡ FAST-START: Basic data ready in', performance.now() - startTime, 'ms');
 
     // ⚡ PRIORITY 2: Get basic transactions with timeout
-    let basicTransactions: TransactionInfo[] = [];
+    let basicTransactions: Transaction[] = [];
     try {
       const txPage1 = await WalletAPI.fetchTransactions(walletAddress, 1, 200);
-      const txPage2 = await WalletAPI.fetchTransactions(walletAddress, 2, 200);
-      const txPage3 = await WalletAPI.fetchTransactions(walletAddress, 3, 200);
-      basicTransactions = [...txPage1, ...txPage2, ...txPage3];
+      basicTransactions = [...txPage1];
     } catch (err) {
       console.warn('Transaction fetch failed:', err instanceof Error ? err.message : 'Unknown');
     }
@@ -205,6 +220,116 @@ export async function POST(request: NextRequest) {
         console.log('🔎 DEEP DISCOVERY merged tokens:', mergedList.map(t => ({ symbol: t.symbol, valueUSD: t.valueUSD })));
       } catch (err) {
         console.warn('Deep token discovery failed:', err instanceof Error ? err.message : String(err));
+      }
+    }
+
+    // 🚑 GUARANTEED FALLBACK: If still no tokens, use ultra-fast common token scan
+    if ((portfolioData.tokens?.length || 0) === 0) {
+      try {
+        const fastTokens = await WalletAPI.fetchTopTokensOnlyFast(walletAddress);
+        if (Array.isArray(fastTokens) && fastTokens.length > 0) {
+          portfolioData.tokens = fastTokens;
+          portfolioData.tokenCount = fastTokens.length;
+          console.log('⚡ FALLBACK: Using ultra-fast common token scan with', fastTokens.length, 'tokens');
+        }
+      } catch (err) {
+        console.warn('Ultra-fast fallback failed:', err instanceof Error ? err.message : String(err));
+      }
+    }
+
+    // 🌐 COVALENT FALLBACK: As a final step, try Covalent balances if still empty
+    if ((portfolioData.tokens?.length || 0) === 0) {
+      try {
+        const covalentTokens = await WalletAPI.getAllTokensCovalent(walletAddress);
+        if (Array.isArray(covalentTokens) && covalentTokens.length > 0) {
+          portfolioData.tokens = covalentTokens;
+          portfolioData.tokenCount = covalentTokens.length;
+          console.log('🌐 FALLBACK: Using Covalent balances with', covalentTokens.length, 'tokens');
+        }
+      } catch (err) {
+        console.warn('Covalent fallback failed:', err instanceof Error ? err.message : String(err));
+      }
+    }
+
+    // 🛰️ BLOCKCHAIR FALLBACK: Discover ERC-20 contracts from public explorer when everything else fails
+    if ((portfolioData.tokens?.length || 0) === 0) {
+      try {
+        const urls = [
+          `https://api.blockchair.com/ethereum/erc-20/transactions?recipient=${walletAddress}&limit=100`,
+          `https://api.blockchair.com/ethereum/erc-20/transactions?sender=${walletAddress}&limit=100`
+        ];
+        const contracts = new Map<string, { address: string; symbol: string; name: string; decimals: number }>();
+        for (const u of urls) {
+          const res = await fetch(u, { headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(8000) });
+          if (!res.ok) continue;
+          const j = await res.json();
+          const data = Array.isArray(j?.data) ? j.data : [];
+          for (const it of data) {
+            const tokenAddr = (it?.token_address || '').toLowerCase();
+            const symbol = it?.token_symbol || 'UNKNOWN';
+            const name = it?.token_name || symbol;
+            const decimals = typeof it?.token_decimals === 'number' ? it.token_decimals : 18;
+            if (tokenAddr) contracts.set(tokenAddr, { address: tokenAddr, symbol, name, decimals });
+          }
+        }
+        if (contracts.size > 0) {
+          portfolioData.tokens = Array.from(contracts.values()).map(t => ({
+            symbol: t.symbol,
+            name: t.name,
+            address: t.address,
+            decimals: t.decimals,
+            balance: '0',
+            priceUSD: 0,
+            valueUSD: 0,
+            verified: false,
+            hasNoPriceData: true,
+            chain: 'eth'
+          }));
+          portfolioData.tokenCount = portfolioData.tokens.length;
+          console.log('🛰️ FALLBACK: Blockchair discovered', portfolioData.tokenCount, 'token contracts');
+        }
+      } catch (err) {
+        console.warn('Blockchair fallback failed:', err instanceof Error ? err.message : String(err));
+      }
+    }
+
+    // 🔎 ETHPLORER FALLBACK: Use public Ethplorer API (freekey) to list address tokens
+    if ((portfolioData.tokens?.length || 0) === 0) {
+      try {
+        const url = `https://api.ethplorer.io/getAddressInfo/${walletAddress}?apiKey=freekey`;
+        const res = await fetch(url, { headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(8000) });
+        if (res.ok) {
+          const j = await res.json();
+          const tokens = Array.isArray(j?.tokens) ? j.tokens : [];
+          const list = tokens.map((t: { tokenInfo?: { address?: string; symbol?: string; name?: string; decimals?: string; price?: { rate?: number } }; balance?: number | string }) => {
+            const addr = (t?.tokenInfo?.address || '').toLowerCase();
+            const symbol = t?.tokenInfo?.symbol || 'UNKNOWN';
+            const name = t?.tokenInfo?.name || symbol;
+            const decimals = parseInt(t?.tokenInfo?.decimals || '18') || 18;
+            const balanceRaw = t?.balance || 0;
+            const balance = typeof balanceRaw === 'number' ? balanceRaw : parseFloat(String(balanceRaw || '0'));
+            const priceUSD = typeof t?.tokenInfo?.price?.rate === 'number' ? t.tokenInfo.price.rate : 0;
+            return {
+              symbol,
+              name,
+              address: addr,
+              decimals,
+              balance: String(balance),
+              priceUSD,
+              valueUSD: priceUSD * (typeof balance === 'number' ? balance : parseFloat(String(balance)) || 0),
+              verified: false,
+              hasNoPriceData: priceUSD === 0,
+              chain: 'eth'
+            } as TokenInfo;
+          });
+          if (list.length > 0) {
+            portfolioData.tokens = list;
+            portfolioData.tokenCount = list.length;
+            console.log('🔎 FALLBACK: Ethplorer returned', list.length, 'tokens');
+          }
+        }
+      } catch (err) {
+        console.warn('Ethplorer fallback failed:', err instanceof Error ? err.message : String(err));
       }
     }
 
@@ -262,43 +387,65 @@ export async function POST(request: NextRequest) {
     console.log(`🔍 OVERVIEW DEBUG: Tokens with values: ${tokensWithValues.length}, No price: ${tokensNoPrice.length}`);
 
     // Enhanced scam detection disabled
+    const TRUSTED_SYMBOLS = new Set<string>([
+      // Stablecoins
+      'USDC','USDT','DAI','TUSD','BUSD','FRAX','LUSD','USDD','USDP','GUSD','EURS','SUSD','USDJ','USTC',
+      // Wrapped majors
+      'WBTC','WETH','stETH','rETH','cbETH','frxETH','sETH','WSTETH',
+      // L1/L2 ecosystem and blue chips
+      'MATIC','POL','ARB','OP','LINK','UNI','AAVE','MKR','COMP','LDO','SNX','SUSHI','CRV','GRT','YFI','BAL','1INCH','BNT','BAT','ZRX','ENS','GLM','ANKR',
+      // Known meme tokens
+      'SHIB','DOGE','PEPE','FLOKI','BABYDOGE','BONK','AKITA','ELON','DOGELON','WOJAK','TURBO',
+      // DeFi LPs and derivatives
+      '3CRV','CVX','CVXCRV','CVX-CRV','TRICRYPTO','YVDAI','YVUSDC','YVUSDT'
+    ]);
     const prefilterTokens: TokenInfo[] = allTokensList as TokenInfo[];
     for (const token of prefilterTokens) {
+      const symU = (token.symbol || '').toUpperCase();
+      const isMajorSymbol = TRUSTED_SYMBOLS.has(symU);
+      if (isMajorSymbol) {
+        continue;
+      }
       const hasVisitWebsitePattern = /visit\s+website|claim\s+rewards|drop\s*\w+\s*\.org/i.test(token.name || '');
       const hasURLPattern = /\bhttps?:\/\/\S+/i.test(token.name || '');
       const hasNoPrice = !token.priceUSD || token.priceUSD <= 0;
-      const isSuspiciousSymbol = token.symbol && (token.symbol.length > 10 || /\d/.test(token.symbol));
+      const numericLeading = /^\d{2,}/.test(token.symbol || '');
+      const isSuspiciousSymbol = (token.symbol && token.symbol.length > 12) || numericLeading;
       const hasSmallBalance = parseFloat(token.balance || '0') < 0.001;
       const isUnverified = !token.verified;
       const hasLongName = (token.name || '').length > 30;
       const hasWeirdChars = /[^a-zA-Z0-9\s]/.test(token.symbol || '');
+      const isMajor = TRUSTED_SYMBOLS.has((token.symbol || '').toUpperCase());
 
       // Enhanced risk scoring
       let riskScore = 0;
       const reasons: string[] = [];
 
-      if (hasVisitWebsitePattern) { riskScore += 30; reasons.push('Suspicious claim website pattern'); }
-      if (hasURLPattern) { riskScore += 25; reasons.push('URL pattern in token name'); }
-      if (hasNoPrice && isUnverified) { riskScore += 35; reasons.push('Unverified with no price data'); }
-      if (hasNoPrice) { riskScore += 15; reasons.push('No price data available'); }
-      if (isSuspiciousSymbol) { riskScore += 20; reasons.push('Unusual symbol characteristics'); }
-      if (hasSmallBalance && hasNoPrice) { riskScore += 10; reasons.push('Micro balance with no price'); }
-      if (hasLongName) { riskScore += 25; reasons.push('Unusually long token name'); }
-      if (hasWeirdChars) { riskScore += 25; reasons.push('Special characters in symbol'); }
-      if (isUnverified) { riskScore += 10; reasons.push('Contract not verified'); }
+      if (hasVisitWebsitePattern) { riskScore += 40; reasons.push('Suspicious claim website pattern'); }
+      if (hasURLPattern) { riskScore += 35; reasons.push('URL pattern in token name'); }
+      if (hasNoPrice && isUnverified && !isMajor) { riskScore += 20; reasons.push('Unverified with no price data'); }
+      if (hasNoPrice && !isMajor) { riskScore += 10; reasons.push('No price data available'); }
+      if (isSuspiciousSymbol && !isMajor) { riskScore += 8; reasons.push('Unusual symbol characteristics'); }
+      if (hasSmallBalance && hasNoPrice && !isMajor) { riskScore += 5; reasons.push('Micro balance with no price'); }
+      if (!isMajor && hasSmallBalance && isUnverified && !hasNoPrice) { riskScore += 5; reasons.push('Micro balance on unverified token'); }
+      if (hasLongName && !isMajor) { riskScore += 10; reasons.push('Unusually long token name'); }
+      if (hasWeirdChars && !isMajor) { riskScore += 10; reasons.push('Special characters in symbol'); }
+      if (isUnverified && !isMajor) { riskScore += 5; reasons.push('Contract not verified'); }
 
-      if ((hasWeirdChars || hasLongName) && riskScore < 25) { riskScore = 25; }
-      if ((hasVisitWebsitePattern || hasURLPattern) && riskScore < 55) { riskScore = 55; }
-      if (isUnverified && (hasWeirdChars || hasLongName) && riskScore < 50) { riskScore = 50; }
+      
 
       // Determine risk level
       let riskLevel: 'low' | 'medium' | 'high' | 'critical' = 'low';
-      if (riskScore >= 70) riskLevel = 'critical';
-      else if (riskScore >= 50) riskLevel = 'high';
-      else if (riskScore >= 25) riskLevel = 'medium';
+      if (riskScore >= 85) riskLevel = 'critical';
+      else if (riskScore >= 65) riskLevel = 'high';
+      else if (riskScore >= 40) riskLevel = 'medium';
+      if (!isMajor && hasNoPrice && riskLevel === 'low') riskLevel = 'medium';
 
       // Flag tokens with any suspicious signal (including low risk)
-      if (reasons.length > 0) {
+      // Verified tokens with valid price and no strong signals are not flagged
+      const hasStrongSignal = hasVisitWebsitePattern || hasURLPattern || hasWeirdChars || hasLongName;
+      const hasValidPrice = typeof token.priceUSD === 'number' && token.priceUSD > 0;
+      if (reasons.length > 0 && !(token.verified && hasValidPrice && !hasStrongSignal)) {
         console.log(`🚨 SCAM DETECTED: ${token.symbol} - Score: ${riskScore}, Level: ${riskLevel}, Reasons: ${reasons.join(', ')}`);
 
         flaggedTokensForScamTab.push({
@@ -306,7 +453,7 @@ export async function POST(request: NextRequest) {
           tokenAddress: token.address,
           riskLevel,
           score: Math.min(riskScore + 20, 100), // Normalize to 0-100 scale
-          confidencePct: Math.min(0.5 + (riskScore / 100), 0.95),
+          confidencePct: Math.min(95, Math.max(50, Math.round(50 + riskScore * 0.4))),
           reasons: reasons.length > 0 ? reasons : ['Suspicious token detected'],
           evidence: {
             staticCode: {
@@ -350,11 +497,7 @@ export async function POST(request: NextRequest) {
     let mediumRiskCount = 0;
     let lowRiskCount = 0;
 
-    // Known safe tokens that don't need analysis
-    const TRUSTED_SYMBOLS = ['USDC', 'USDT', 'WBTC', 'WETH', 'DAI', 'LINK', 'UNI', 'AAVE', 'COMP'];
-
     // Analyze any remaining tokens that weren't pre-filtered
-    
 
     console.log(`⚡ Analyzing 0 additional tokens for comprehensive scam detection...`);
 
@@ -372,82 +515,83 @@ export async function POST(request: NextRequest) {
       hasNoPriceData: t.hasNoPriceData
     })));
 
-    const tokensToAnalyze: TokenInfo[] = allWalletTokens.filter(t => !TRUSTED_SYMBOLS.includes((t.symbol || '').toUpperCase()));
+    const tokensToAnalyze: TokenInfo[] = allWalletTokens;
 
     console.log(`⚡ Skipping ${allWalletTokens.length - tokensToAnalyze.length} trusted tokens, analyzing ${tokensToAnalyze.length} tokens...`);
 
     // ⚡ ENHANCED ANALYSIS: Use full scam detection for suspicious tokens
     // 🐋 WHALE WALLET: Analyze more tokens for comprehensive coverage
-    const analysisLimit = Math.min(tokensToAnalyze.length, 50);
-    console.log(`🐋 Analyzing ${analysisLimit} tokens for scam detection (whale wallet mode)...`);
+    const analysisLimit = tokensToAnalyze.length;
+    console.log(`🐋 Analyzing ${analysisLimit} tokens for scam detection with concurrency...`);
 
     const { ScamDetectionEngine } = await import('@/lib/ai/scam/scamEngine');
     const engine = new ScamDetectionEngine();
-    for (const token of tokensToAnalyze.slice(0, analysisLimit)) {
-      try {
-        const scamResult = await engine.analyzeToken({
-          address: token.address,
-          symbol: token.symbol,
-          name: token.name,
-          decimals: token.decimals,
-          verified: token.verified,
-          valueUSD: token.valueUSD,
-          balance: token.balance
-        }, walletAddress!);
 
-        scamResults.push(scamResult);
+    const concurrency = Math.min(24, Math.max(8, Math.floor((typeof tokensToAnalyze.length === 'number' ? tokensToAnalyze.length : 100) / 40) + 12));
+    let cursor = 0;
+    const worker = async () => {
+      while (cursor < analysisLimit) {
+        const idx = cursor++;
+        const token = tokensToAnalyze[idx];
+        if (!token) continue;
+        try {
+          const scamResult = await engine.analyzeToken({
+            address: token.address || '',
+            symbol: token.symbol || 'UNKNOWN',
+            name: token.name || (token.symbol || 'UNKNOWN'),
+            decimals: token.decimals ?? 18,
+            verified: !!token.verified,
+            valueUSD: token.valueUSD ?? 0,
+            balance: token.balance || '0'
+          }, walletAddress!);
 
-        const riskLevel = scamResult.riskLevel;
-        const score = scamResult.score;
-
-        if (riskLevel === 'high') highRiskCount++;
-        else if (riskLevel === 'medium') mediumRiskCount++;
-        else lowRiskCount++;
-        allFlaggedTokens.push({
-          tokenAddress: scamResult.tokenAddress,
-          symbol: scamResult.symbol,
-          riskLevel: scamResult.riskLevel,
-          score: scamResult.score,
-          confidencePct: scamResult.confidencePct,
-          reasons: scamResult.reasons,
-          evidence: scamResult.evidence
-        });
-
-        console.log(`⚡ ${token.symbol}: ${riskLevel} risk (score: ${score})`);
-      } catch (error) {
-        console.error(`❌ Failed to analyze ${token.symbol}:`, error);
-        lowRiskCount++;
+          scamResults.push(scamResult);
+          const riskLevel = scamResult.riskLevel;
+          if (riskLevel === 'high') highRiskCount++;
+          else if (riskLevel === 'medium') mediumRiskCount++;
+          else lowRiskCount++;
+          allFlaggedTokens.push({
+            tokenAddress: scamResult.tokenAddress,
+            symbol: scamResult.symbol,
+            riskLevel: scamResult.riskLevel,
+            score: scamResult.score,
+            confidencePct: scamResult.confidencePct,
+            reasons: scamResult.reasons,
+            evidence: scamResult.evidence
+          });
+          if ((idx + 1) % 100 === 0) console.log(`⚡ Progress: analyzed ${idx + 1}/${analysisLimit}`);
+        } catch (error) {
+          console.error(`❌ Failed to analyze ${token.symbol}:`, error);
+          lowRiskCount++;
+        }
       }
-    }
+    };
+    await Promise.all(Array.from({ length: concurrency }, () => worker()));
 
     console.log(`✅ Scam analysis complete: ${highRiskCount} high risk, ${mediumRiskCount} medium risk, ${lowRiskCount} low risk`);
 
-    const unionFlagged: Array<{ tokenAddress?: string; symbol?: string; riskLevel?: string }> = [
-      ...flaggedTokensForScamTab as Array<{ tokenAddress?: string; symbol?: string; riskLevel?: string }>,
-      ...allFlaggedTokens as Array<{ tokenAddress?: string; symbol?: string; riskLevel?: string }>
-    ];
-    const seenKeys = new Set<string>();
-    let calcHigh = 0;
-    let calcMedium = 0;
-    let calcLow = 0;
+    const unionFlagged = [
+      ...flaggedTokensForScamTab as any[],
+      ...allFlaggedTokens as any[]
+    ].filter(t => !TRUSTED_SYMBOLS.has(String(t.symbol || '').toUpperCase()));
+
+    const dedup = new Map<string, any>();
     for (const t of unionFlagged) {
       const addr = (t.tokenAddress || '').toLowerCase();
       const sym = (t.symbol || '').toLowerCase();
       const key = addr && addr.length > 0 ? addr : sym;
-      if (!key || seenKeys.has(key)) continue;
-      seenKeys.add(key);
-      const lvl = String(t.riskLevel || '').toLowerCase();
-      if (lvl === 'high' || lvl === 'critical') calcHigh++;
-      else if (lvl === 'medium') calcMedium++;
-      else if (lvl === 'low') calcLow++;
+      if (!key) continue;
+      if (!dedup.has(key)) dedup.set(key, t);
     }
-    highRiskCount = calcHigh;
-    mediumRiskCount = calcMedium;
-    lowRiskCount = calcLow;
+    const dedupList = Array.from(dedup.values());
+    highRiskCount = dedupList.filter(t => String(t.riskLevel || '').toLowerCase() === 'high' || String(t.riskLevel || '').toLowerCase() === 'critical').length;
+    mediumRiskCount = dedupList.filter(t => String(t.riskLevel || '').toLowerCase() === 'medium').length;
+    lowRiskCount = dedupList.filter(t => String(t.riskLevel || '').toLowerCase() === 'low').length;
 
     // ⚡ FINAL RESULT: Create analysis result with filtered data
     const balanceETH = parseFloat(portfolioData.ethBalance || '0') / 1e18;
     const ethValueUSD = ethPriceValue ? balanceETH * ethPriceValue : null;
+    const scannedTotal = (portfolioData.tokenCount || (portfolioData.tokens?.length || 0) || tokensToAnalyze.length);
     const analysisResult = {
       walletAddress,
       timestamp: Date.now(),
@@ -459,8 +603,8 @@ export async function POST(request: NextRequest) {
       scam: {
         analysis: 'enabled',
         riskLevel: highRiskCount > 0 ? 'high' : (mediumRiskCount > 0 ? 'medium' : 'low'),
-        flaggedTokens: [...flaggedTokensForScamTab, ...allFlaggedTokens],
-        totalTokens: (portfolioData.tokens?.length || 0),
+        flaggedTokens: dedupList,
+        totalTokens: scannedTotal,
         safeTokens: (portfolioData.tokens?.length || 0) - (highRiskCount + mediumRiskCount),
         highRiskCount,
         mediumRiskCount,
@@ -557,6 +701,7 @@ export async function POST(request: NextRequest) {
     const totalTime = performance.now() - startTime;
     console.log(`⚡ TOTAL ANALYSIS TIME: ${Math.round(totalTime)}ms`);
 
+    
     return NextResponse.json({
       success: true,
       data: analysisResult,

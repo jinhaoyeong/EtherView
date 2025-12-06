@@ -1,12 +1,9 @@
 "use client";
 
-import { ReactNode, createContext, useContext, useEffect, useState } from 'react';
+import { ReactNode, createContext, useContext } from 'react';
 import { useSettings } from '@/hooks/use-settings';
 
-interface CurrencyLanguage {
-  currency: string;
-  language: string;
-}
+ 
 
 interface CurrencyLanguageContextType {
   formatCurrency: (amount: number) => string;

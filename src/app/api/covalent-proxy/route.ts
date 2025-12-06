@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
     // Try with query param only
     let res = await fetch(baseUrl, {
       headers: { 'Accept': 'application/json' },
-      signal: AbortSignal.timeout(10000)
+      signal: AbortSignal.timeout(15000)
     })
 
     // Fallbacks for auth formats
@@ -36,7 +36,7 @@ export async function GET(request: NextRequest) {
           'Accept': 'application/json',
           'Authorization': `Bearer ${apiKey}`
         },
-        signal: AbortSignal.timeout(10000)
+        signal: AbortSignal.timeout(15000)
       })
     }
 
@@ -47,7 +47,7 @@ export async function GET(request: NextRequest) {
           'Accept': 'application/json',
           'Authorization': `Basic ${basic}`
         },
-        signal: AbortSignal.timeout(10000)
+        signal: AbortSignal.timeout(15000)
       })
     }
 

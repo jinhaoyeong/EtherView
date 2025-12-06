@@ -64,8 +64,9 @@ export class WhaleMovementEngine {
   ]);
 
   async analyzeWhaleMovements(walletAddress?: string): Promise<WhaleMovementResult> {
+    const start = Date.now()
     // Fetch recent large transactions
-    const largeTransactions = await this.fetchLargeTransactions(walletAddress);
+    const largeTransactions = await this.fetchLargeTransactions();
 
     // Analyze each transaction for whale characteristics
     const whaleEvents = await Promise.all(
@@ -74,6 +75,8 @@ export class WhaleMovementEngine {
 
     // Generate summary statistics
     const summary = this.generateSummary(whaleEvents);
+
+    console.log('🐋 Whale analysis', { walletAddress, events: whaleEvents.length, latencyMs: Date.now() - start })
 
     return {
       events: whaleEvents,
@@ -130,11 +133,11 @@ export class WhaleMovementEngine {
       confidence,
       factors,
       estimatedSlippage: this.estimateSlippage(whaleEvent),
-      liquidityDepth: await this.estimateLiquidityDepth(whaleEvent.tokenAddress)
+      liquidityDepth: await this.estimateLiquidityDepth()
     };
   }
 
-  private async fetchLargeTransactions(walletAddress?: string) {
+  private async fetchLargeTransactions() {
     // Mock implementation - would query blockchain APIs
     return [
       {
@@ -170,7 +173,7 @@ export class WhaleMovementEngine {
     ];
   }
 
-  private async analyzeWhaleEvent(transaction: any): Promise<WhaleEvent> {
+  private async analyzeWhaleEvent(transaction: { hash: string; timestamp: number; tokenSymbol: string; tokenAddress: string; amount: string; fromAddress: string; toAddress: string; valueUSD: number }): Promise<WhaleEvent> {
     const transferType = this.classifyTransferType(transaction.fromAddress, transaction.toAddress);
     const confidenceScore = this.calculateConfidenceScore(transaction, transferType);
     const impactScore = this.calculateImpactScore(transaction, transferType);
@@ -190,7 +193,7 @@ export class WhaleMovementEngine {
       confidenceScore,
       impactScore,
       aiAnalysis,
-      priceCorrelation: await this.analyzePriceCorrelation(transaction)
+      priceCorrelation: await this.analyzePriceCorrelation()
     };
   }
 
@@ -208,7 +211,7 @@ export class WhaleMovementEngine {
     return this.EXCHANGE_ADDRESSES.has(address.toLowerCase());
   }
 
-  private calculateConfidenceScore(transaction: any, transferType: WhaleEvent['transferType']): number {
+  private calculateConfidenceScore(transaction: { valueUSD: number; fromAddress: string; toAddress: string }, transferType: WhaleEvent['transferType']): number {
     let score = 0.5;
 
     // Higher value = higher confidence
@@ -228,7 +231,7 @@ export class WhaleMovementEngine {
     return Math.min(1.0, score);
   }
 
-  private calculateImpactScore(transaction: any, transferType: WhaleEvent['transferType']): number {
+  private calculateImpactScore(transaction: { valueUSD: number }, transferType: WhaleEvent['transferType']): number {
     let score = 0;
 
     // Base impact from value
@@ -247,10 +250,10 @@ export class WhaleMovementEngine {
     return Math.min(1.0, score);
   }
 
-  private async generateAIAnalysis(transaction: any, transferType: WhaleEvent['transferType']) {
+  private async generateAIAnalysis(transaction: { valueUSD: number; tokenSymbol: string }, transferType: WhaleEvent['transferType']) {
     const significance = this.generateSignificanceText(transaction, transferType);
     const marketImplications = this.generateMarketImplications(transaction, transferType);
-    const historicalContext = this.generateHistoricalContext(transaction);
+    const historicalContext = this.generateHistoricalContext();
     const riskLevel = this.determineRiskLevel(transaction, transferType);
 
     return {
@@ -261,7 +264,7 @@ export class WhaleMovementEngine {
     };
   }
 
-  private generateSignificanceText(transaction: any, transferType: WhaleEvent['transferType']): string {
+  private generateSignificanceText(transaction: { valueUSD: number; tokenSymbol: string }, transferType: WhaleEvent['transferType']): string {
     const valueText = `$${(transaction.valueUSD / 1000000).toFixed(1)}M`;
 
     switch (transferType) {
@@ -278,7 +281,7 @@ export class WhaleMovementEngine {
     }
   }
 
-  private generateMarketImplications(transaction: any, transferType: WhaleEvent['transferType']): string {
+  private generateMarketImplications(transaction: { tokenSymbol: string }, transferType: WhaleEvent['transferType']): string {
     switch (transferType) {
       case 'wallet_to_exchange':
         return `This could create downward pressure on ${transaction.tokenSymbol} price if the holder intends to sell. Monitor order books for large sell walls.`;
@@ -293,7 +296,7 @@ export class WhaleMovementEngine {
     }
   }
 
-  private generateHistoricalContext(transaction: any): string {
+  private generateHistoricalContext(): string {
     // Mock historical context - would analyze historical patterns
     const contexts = [
       'Similar transfers in the past have preceded 15-30 minute price adjustments of 2-5%',
@@ -305,7 +308,7 @@ export class WhaleMovementEngine {
     return contexts[Math.floor(Math.random() * contexts.length)];
   }
 
-  private determineRiskLevel(transaction: any, transferType: WhaleEvent['transferType']): 'low' | 'medium' | 'high' {
+  private determineRiskLevel(transaction: { valueUSD: number }, transferType: WhaleEvent['transferType']): 'low' | 'medium' | 'high' {
     if (transaction.valueUSD > 50000000) return 'high'; // >$50M
     if (transferType === 'wallet_to_exchange' && transaction.valueUSD > 10000000) return 'high';
     if (transaction.valueUSD > 10000000) return 'medium';
@@ -313,7 +316,7 @@ export class WhaleMovementEngine {
     return 'low';
   }
 
-  private async analyzePriceCorrelation(transaction: any) {
+  private async analyzePriceCorrelation() {
     // Mock correlation analysis - would analyze price data around transaction time
     return {
       priceChange: (Math.random() - 0.5) * 0.1, // -5% to +5%
@@ -328,7 +331,7 @@ export class WhaleMovementEngine {
     return Math.min(0.1, sizePercent * 0.01); // Max 10% slippage
   }
 
-  private async estimateLiquidityDepth(tokenAddress: string): Promise<number> {
+  private async estimateLiquidityDepth(): Promise<number> {
     // Mock liquidity depth estimation - would query DEX reserves
     return Math.random() * 10000000; // $0-$10M liquidity
   }

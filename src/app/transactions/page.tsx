@@ -62,6 +62,7 @@ export default function Transactions() {
 
   const loadTransactions = async (address: string, page: number = 1, append: boolean = false) => {
     try {
+      const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
       if (!append) {
         setLoading(true);
         setCurrentPage(1);
@@ -106,10 +107,31 @@ export default function Transactions() {
       // ⚡ HAS MORE: Check if there are more transactions to load
       // If we got exactly 15 transactions, there might be more available
       setHasMore(realTransactions.length === 15);
+      const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      const duration = Math.round((t1 - t0));
+      try {
+        await fetch('/api/metrics', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: append ? 'tab_transactions_load_more' : 'tab_transactions_loaded',
+            metric: append ? 'ui_transactions_load_more_ms' : 'ui_transactions_switch_time_ms',
+            value: duration,
+            payload: { address, page, count: realTransactions.length }
+          })
+        })
+      } catch {}
 
     } catch (err) {
       console.error('❌ Failed to load transactions:', err);
       setError(err instanceof Error ? err.message : "Failed to load transactions");
+      try {
+        await fetch('/api/metrics', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: 'tab_transactions_failed', counter: 'ui_tab_load_failed', payload: { address, page } })
+        })
+      } catch {}
     } finally {
       setLoading(false);
       setLoadingMore(false);

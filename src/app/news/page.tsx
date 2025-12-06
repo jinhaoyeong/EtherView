@@ -58,6 +58,8 @@ interface NewsArticle {
     };
     impactLevel?: 'Low' | 'Medium' | 'High' | 'Critical';
     marketSegment?: 'Crypto' | 'Traditional' | 'Macro' | 'Regulatory';
+    entities?: Array<{ name: string; sentiment: number; relevance: number }>;
+    meta?: { source?: string; model?: string };
   };
 }
 
@@ -86,6 +88,10 @@ interface Prediction {
   timeHorizon: 'short' | 'medium' | 'long';
   targetPrice?: number;
   keyFactors: string[];
+  riskFactors?: string[];
+  keyFactorsDetailed?: { positive: string[]; negative: string[]; neutral: string[] };
+  marketSignals?: { volume: 'High' | 'Medium' | 'Low'; volatility: 'High' | 'Medium' | 'Low'; momentum: 'Strong' | 'Moderate' | 'Weak' };
+  technicalIndicators?: { rsi?: number; macd?: number; bollinger?: 'Upper' | 'Middle' | 'Lower'; support?: number; resistance?: number };
 }
 
 export default function NewsSentiment() {
@@ -97,6 +103,7 @@ export default function NewsSentiment() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isDataCached, setIsDataCached] = useState(false);
+  const [useFastMode, setUseFastMode] = useState(false);
   
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
@@ -104,57 +111,76 @@ export default function NewsSentiment() {
   const [expandedArticles, setExpandedArticles] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    if (walletAddress && walletAddress.trim() !== '') {
-      loadNewsSentiment(walletAddress);
-    } else {
-      setLoading(false);
-      setError("Please enter a wallet address to view news sentiment.");
-    }
+    // Add a small delay to ensure wallet context is loaded
+    const timer = setTimeout(() => {
+      console.log('📰 News page useEffect - walletAddress:', walletAddress);
+      if (walletAddress && walletAddress.trim() !== '') {
+        loadNewsSentiment(walletAddress);
+      } else {
+        // Try to get wallet from localStorage as fallback
+        const storedWallet = localStorage.getItem("etherview_wallet");
+        console.log('📰 News page - checking localStorage wallet:', storedWallet);
+        if (storedWallet && storedWallet.trim() !== '') {
+          loadNewsSentiment(storedWallet);
+        } else {
+          setLoading(false);
+          setError("Please enter a wallet address to view news sentiment.");
+        }
+      }
+    }, 100); // 100ms delay to ensure context is loaded
+
+    return () => clearTimeout(timer);
   }, [walletAddress]);
 
   const loadNewsSentiment = async (address: string, forceRefresh: boolean = false) => {
     try {
+      const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
       setLoading(true);
       setError(null);
 
       console.log(`📰 Loading news sentiment analysis${forceRefresh ? ' (forced refresh)' : ' (using cache if available)'}...`);
 
-      const res = await fetch(`/api/news-sentiment?walletAddress=${encodeURIComponent(address)}&forceRefresh=${forceRefresh ? 1 : 0}`)
+      const res = await fetch(`/api/news-sentiment?walletAddress=${encodeURIComponent(address)}&forceRefresh=${forceRefresh ? 1 : 0}&fast=${useFastMode ? 1 : 0}`)
       if (!res.ok) {
         throw new Error(`HTTP ${res.status}`)
       }
-      const sentimentResult = await res.json()
+      const apiResponse = await res.json()
 
-      console.log('📰 Sentiment analysis result:', sentimentResult);
+      console.log('📰 Sentiment analysis result:', apiResponse);
+
+      // Handle the new API response structure with success/data wrapper
+      const sentimentResult = apiResponse.success ? apiResponse.data : apiResponse;
 
       const transformedArticles: NewsArticle[] = (sentimentResult.articles || [])
-        .filter(article => {
-          const ts = new Date(article.publishedAt).getTime();
+        .filter((article: { publishedAt?: string }) => {
+          const ts = new Date(article.publishedAt || '').getTime();
           const oneMonthMs = 30 * 24 * 60 * 60 * 1000;
           return ts && (Date.now() - ts) <= oneMonthMs;
         })
-        .map(article => ({
+        .map((article: { id: string; title?: string; source?: string; url?: string; publishedAt?: string; summary?: string; content?: string; sentiment?: { score?: number; label?: string; confidence?: number; reasoning?: string[] | string; keyPhrases?: string[]; emotionalIndicators?: unknown; impactLevel?: 'Low' | 'Medium' | 'High' | 'Critical'; marketSegment?: 'Crypto' | 'Traditional' | 'Macro' | 'Regulatory' }; onChainMetadata?: { mentionedTokens?: string[] }; entities?: string[]; category?: string; author?: string }) => ({
         id: article.id,
-        title: article.title,
-        source: article.source,
-        url: article.url,
-        timestamp: new Date(article.publishedAt).getTime(),
+        title: article.title || 'Untitled',
+        source: article.source || 'Unknown',
+        url: article.url || '#',
+        timestamp: new Date(article.publishedAt || '').getTime(),
         summary: article.summary || 'No summary available',
         content: article.content || undefined,
         sentimentScore: typeof article.sentiment?.score === 'number' ? article.sentiment.score : 0,
-        sentimentLabel: ((article.sentiment?.label || 'Neutral').toLowerCase()) as 'bullish' | 'neutral' | 'bearish',
+        sentimentLabel: ((article.sentiment?.label || 'Neutral').toLowerCase() as 'bullish' | 'neutral' | 'bearish'),
         confidence: typeof article.sentiment?.confidence === 'number' ? article.sentiment.confidence : 0.5,
         entities: (article.onChainMetadata?.mentionedTokens && article.onChainMetadata.mentionedTokens.length > 0)
           ? article.onChainMetadata.mentionedTokens
           : (article.entities || []),
-        category: article.category || 'market',
+        category: normalizeCategory(article.category as string, article.title, article.summary, article.content, article.source),
         author: article.author || undefined,
         analysis: article.sentiment ? {
           reasoning: Array.isArray(article.sentiment.reasoning) ? article.sentiment.reasoning : (article.sentiment.reasoning ? [article.sentiment.reasoning] : []),
           keyPhrases: Array.isArray(article.sentiment.keyPhrases) ? article.sentiment.keyPhrases : [],
           emotionalIndicators: article.sentiment.emotionalIndicators,
           impactLevel: article.sentiment.impactLevel,
-          marketSegment: article.sentiment.marketSegment
+          marketSegment: article.sentiment.marketSegment,
+          entities: Array.isArray((article.sentiment as any).entities) ? (article.sentiment as any).entities : [],
+          meta: (article.sentiment as any).meta
         } : undefined
       }));
 
@@ -230,18 +256,18 @@ export default function NewsSentiment() {
       })();
 
       const transformedMarketSummary: MarketSummary = {
-        aggregatedIndex: typeof sentimentResult.marketSummary.aggregatedIndex === 'number' && sentimentResult.marketSummary.aggregatedIndex !== 0
+        aggregatedIndex: typeof sentimentResult.marketSummary?.aggregatedIndex === 'number' && sentimentResult.marketSummary.aggregatedIndex !== 0
           ? sentimentResult.marketSummary.aggregatedIndex
           : derivedAggregatedIndex,
-        label: (sentimentResult.marketSummary.label || labelFallback).toUpperCase() as 'BULLISH' | 'NEUTRAL' | 'BEARISH',
-        confidence: Math.max(Math.round((sentimentResult.marketSummary.confidence || 0) * 100), avgConfidence),
-        topInfluencers: sentimentResult.marketSummary.topInfluencers || [],
-        topEntities: (sentimentResult.marketSummary.topEntities || []).length > 0
-          ? (sentimentResult.marketSummary.topEntities || []).map(entity => ({ entity: entity.entity, influenceScore: entity.influenceScore }))
+        label: (sentimentResult.marketSummary?.label || labelFallback).toUpperCase() as 'BULLISH' | 'NEUTRAL' | 'BEARISH',
+        confidence: Math.max(Math.round((sentimentResult.marketSummary?.confidence || 0) * 100), avgConfidence),
+        topInfluencers: sentimentResult.marketSummary?.topInfluencers || [],
+        topEntities: (sentimentResult.marketSummary?.topEntities || []).length > 0
+          ? (sentimentResult.marketSummary?.topEntities || []).map((entity: { entity: string; influenceScore: number }) => ({ entity: entity.entity, influenceScore: entity.influenceScore }))
           : derivedTopEntities,
         recentTrend: (() => {
-          if (sentimentResult.marketSummary.trendIndicator === 'rising') return 'up';
-          if (sentimentResult.marketSummary.trendIndicator === 'falling') return 'down';
+          if (sentimentResult.marketSummary?.trendIndicator === 'rising') return 'up';
+          if (sentimentResult.marketSummary?.trendIndicator === 'falling') return 'down';
           if (derivedAggregatedIndex <= -0.03 || bearRatioLocal - bullRatioLocal >= 0.2) return 'down';
           if (derivedAggregatedIndex >= 0.03 || bullRatioLocal - bearRatioLocal >= 0.2) return 'up';
           return derivedTrend;
@@ -250,18 +276,35 @@ export default function NewsSentiment() {
         lastUpdated: Date.now()
       };
 
-      const predictionTrend = (() => {
-        const engineTrend = (sentimentResult.marketSummary.prediction?.shortTerm || 'neutral').toLowerCase();
-        if (derivedAggregatedIndex <= -0.03 || bearRatioLocal - bullRatioLocal >= 0.2) return 'bearish';
-        if (derivedAggregatedIndex >= 0.03 || bullRatioLocal - bearRatioLocal >= 0.2) return 'bullish';
-        return engineTrend as 'bullish' | 'neutral' | 'bearish';
-      })();
+      const predictionTrend: 'bullish' | 'neutral' | 'bearish' =
+        (derivedAggregatedIndex <= -0.03 || bearRatioLocal - bullRatioLocal >= 0.2)
+          ? 'bearish'
+          : (derivedAggregatedIndex >= 0.03 || bullRatioLocal - bearRatioLocal >= 0.2)
+            ? 'bullish'
+            : 'neutral';
 
-      const transformedPrediction: Prediction = {
+      const timeHorizon: 'short' | 'medium' | 'long' = predictionTrend !== 'neutral' ? 'short' : 'medium';
+
+      const apiPred = sentimentResult.marketSummary?.prediction;
+      const transformedPrediction: Prediction = apiPred ? {
+        trend: (apiPred.trend || 'Neutral').toLowerCase() as 'bullish' | 'neutral' | 'bearish',
+        confidence: Math.round((apiPred.confidence || 0) * 100),
+        reasoning: apiPred.reasoning || [],
+        timeHorizon: (apiPred.timeHorizon || 'Short-term (4-24h)').toLowerCase().includes('short') ? 'short' : 'medium',
+        targetPrice: apiPred.targetPrice,
+        keyFactors: [...(apiPred.keyFactors?.positive || []), ...(apiPred.keyFactors?.neutral || []), ...(apiPred.keyFactors?.negative || [])],
+        riskFactors: apiPred.riskFactors || [],
+        keyFactorsDetailed: apiPred.keyFactors || { positive: [], negative: [], neutral: [] },
+        marketSignals: apiPred.marketSignals,
+        technicalIndicators: apiPred.technicalIndicators
+      } : {
         trend: predictionTrend,
-        confidence: Math.round((sentimentResult.marketSummary.prediction?.confidence || 0) * 100),
-        reasoning: [sentimentResult.marketSummary.prediction.reasoning],
-        timeHorizon: 'short',
+        confidence: avgConfidence,
+        reasoning: [
+          `Aggregated index ${derivedAggregatedIndex.toFixed(2)}`,
+          `Bull/Bear ratio ${Math.round(bullRatioLocal * 100)}%/${Math.round(bearRatioLocal * 100)}%`
+        ],
+        timeHorizon,
         keyFactors: ["Market sentiment", "News flow", "Entity analysis", "Trading patterns"]
       };
 
@@ -271,10 +314,31 @@ export default function NewsSentiment() {
       setNewsArticles(transformedArticles);
       setPrediction(transformedPrediction);
       setIsDataCached(!forceRefresh && transformedArticles.length > 0);
+      const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      const duration = Math.round((t1 - t0));
+      try {
+        fetch('/api/metrics', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: 'tab_news_loaded',
+            metric: 'ui_news_switch_time_ms',
+            value: duration,
+            payload: { address, forceRefresh, articles: transformedArticles.length }
+          })
+        }).catch(() => {});
+      } catch {}
       
     } catch (err) {
       console.error('❌ Failed to load news sentiment:', err);
       setError(err instanceof Error ? err.message : "Failed to load news sentiment");
+      try {
+        fetch('/api/metrics', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: 'tab_news_failed', counter: 'ui_tab_load_failed', payload: { address, forceRefresh } })
+        }).catch(() => {});
+      } catch {}
     } finally {
       setLoading(false);
     }
@@ -354,26 +418,113 @@ export default function NewsSentiment() {
     }
   };
 
-  const filteredArticles = newsArticles.filter(article => {
-    const matchesSearch = !searchQuery ||
-      (article.title && article.title.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (article.summary && article.summary.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (article.entities && article.entities.some(entity => entity.toLowerCase().includes(searchQuery.toLowerCase())));
+  const filteredArticles = newsArticles
+    .filter(article => {
+      const matchesSearch = !searchQuery ||
+        (article.title && article.title.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (article.summary && article.summary.toLowerCase().includes(searchQuery.toLowerCase())) ||
+        (article.entities && article.entities.some(entity => entity.toLowerCase().includes(searchQuery.toLowerCase())));
 
-    const matchesCategory = categoryFilter === 'all' || article.category === categoryFilter;
-    const matchesSentiment = sentimentFilter === 'all' || article.sentimentLabel === sentimentFilter;
+      const matchesCategory = categoryFilter === 'all' || article.category === categoryFilter;
+      const matchesSentiment = sentimentFilter === 'all' || article.sentimentLabel === sentimentFilter;
 
-    return matchesSearch && matchesCategory && matchesSentiment;
-  });
+      return matchesSearch && matchesCategory && matchesSentiment;
+    })
+    .slice(0, useFastMode ? 3 : 10);
+
+  const decodeHTMLEntities = (text: string) => {
+    const element = document.createElement('textarea');
+    element.innerHTML = text;
+    return element.value;
+  };
 
   const cleanContent = (text?: string) => {
     if (!text) return '';
-    return text.replace(/\s*\[\+\d+\s+chars\]$/i, '');
+    // First decode HTML entities, then remove trailing char counts
+    return decodeHTMLEntities(text).replace(/\s*\[\+\d+\s+chars\]$/i, '');
   };
 
-  const getPreviewText = (article: NewsArticle) => {
-    const base = cleanContent(article.content) || article.summary || '';
-    return base;
+
+  const getShortPreview = (article: NewsArticle) => {
+    const source = article.summary || article.content || '';
+    const text = cleanContent(source);
+    const sentences = text.split(/(?<=[.!?])\s+/);
+    return sentences.slice(0, 3).join(' ');
+  };
+
+  const normalizeCategory = (
+    category?: string,
+    title?: string,
+    summary?: string,
+    content?: string,
+    source?: string
+  ): NewsArticle['category'] => {
+    const c = (category || '').toLowerCase();
+    const allowed: Array<NewsArticle['category']> = ['macro','geopolitical','regulation','tech','social','market'];
+    if (allowed.includes(c as any)) return c as NewsArticle['category'];
+    if (c === 'general' || c === 'business' || c === 'finance') return 'market';
+    if (c === 'economy' || c === 'economic') return 'macro';
+    if (c === 'policy' || c === 'regulatory') return 'regulation';
+    return inferCategory(title, summary, content, source);
+  };
+
+  const inferCategory = (title?: string, summary?: string, content?: string, source?: string): NewsArticle['category'] => {
+    const t = ((title || '') + ' ' + (summary || '') + ' ' + (content || '') + ' ' + (source || '')).toLowerCase();
+    const score: Record<string, number> = { macro: 0, geopolitical: 0, regulation: 0, tech: 0, social: 0, market: 0 };
+    const inc = (k: keyof typeof score, w = 1) => { score[k] = (score[k] || 0) + w };
+    const has = (kw: string) => t.includes(kw);
+    if (has('inflation') || has('interest rate') || has('gdp') || has('unemployment') || has('cpi') || has('ppi') || has('economy')) inc('macro', 2);
+    if (has('fed') || has('ecb') || has('bank of england')) inc('macro', 1);
+    if (has('sanction') || has('election') || has('war') || has('conflict') || has('geopolitical') || has('china') || has('russia')) inc('geopolitical', 2);
+    if (has('sec') || has('cftc') || has('fca') || has('esma') || has('lawsuit') || has('ban') || has('regulation') || has('policy') || has('approval')) inc('regulation', 2);
+    if (has('upgrade') || has('fork') || has('merge') || has('release') || has('protocol') || has('bug') || has('vulnerability') || has('ai') || has('technology')) inc('tech', 2);
+    if (has('twitter') || has('reddit') || has('influencer') || has('community') || has('social')) inc('social', 2);
+    if (has('price') || has('rally') || has('surge') || has('selloff') || has('trading') || has('volatility') || has('volume') || has('market')) inc('market', 2);
+    const best = Object.entries(score).sort((a, b) => b[1] - a[1])[0];
+    return (best && best[1] > 0 ? (best[0] as NewsArticle['category']) : 'market');
+  };
+
+  const getAnalysisNarrative = (article: NewsArticle) => {
+    const sentiment = article.sentimentLabel;
+    const conf = Math.round((article.confidence || 0) * 100);
+    const phrases = (article.analysis?.keyPhrases || []).slice(0, 2).join(', ');
+    const entities = (article.analysis?.entities || []).slice(0, 2).map(e => e.name).join(', ');
+    const impact = article.analysis?.impactLevel || 'Medium';
+    const segment = getCategoryLabel(article.category);
+    let text = `Assessment: ${sentiment} (${conf}% confidence).`;
+    if (phrases) text += ` Key themes: ${phrases}.`;
+    if (entities) text += ` Entities: ${entities}.`;
+    text += ` Impact: ${impact} in ${segment} segment.`;
+    return text;
+  };
+
+  const getAnalysisParagraph = (article: NewsArticle) => {
+    const sentiment = article.sentimentLabel;
+    const conf = Math.round((article.confidence || 0) * 100);
+    const impact = article.analysis?.impactLevel || 'Medium';
+    const segment = getCategoryLabel(article.category);
+    const source = article.source || 'Unknown';
+    const time = formatTimestamp(article.timestamp);
+    const phrases = (article.analysis?.keyPhrases || []).slice(0, 2);
+    const entities = (article.analysis?.entities || []).slice(0, 3).map(e => e.name);
+    const reasons = (article.analysis?.reasoning || []).filter(r => !/parse error|unstructured/i.test(r)).slice(0, 2);
+    const s1 = `${source} (${time}) indicates a ${sentiment} tone (${conf}% confidence) with ${impact} impact in ${segment}.`;
+    const s2 = reasons.length > 0
+      ? `Top signals: ${reasons.join('; ')}.`
+      : phrases.length > 0
+        ? `Key themes: ${phrases.join(', ')}.`
+        : `Key themes: market sentiment and recent developments.`;
+    const s3 = entities.length > 0
+      ? `Entities: ${entities.join(', ')}.`
+      : `Focus: ${segment} news flow.`;
+    return `${s1} ${s2} ${s3}`;
+  };
+
+  const formatModelMeta = (meta?: { source?: string; model?: string }) => {
+    if (!meta) return 'Unknown';
+    if (meta.source === 'Fallback') return 'Local Analyzer';
+    if (meta.model && meta.source) return `${meta.model} (${meta.source})`;
+    return meta.model || meta.source || 'Unknown';
   };
 
   const formatTimestamp = (timestamp: number) => {
@@ -389,6 +540,18 @@ export default function NewsSentiment() {
     } else {
       const days = Math.floor(hours / 24);
       return `${days}d ago`;
+    }
+  };
+
+  const getCategoryLabel = (category: string) => {
+    switch (category) {
+      case 'macro': return 'Macroeconomic';
+      case 'geopolitical': return 'Geopolitical';
+      case 'regulation': return 'Regulation';
+      case 'tech': return 'Technology';
+      case 'social': return 'Social';
+      case 'market': return 'Market';
+      default: return 'General';
     }
   };
 
@@ -501,10 +664,23 @@ export default function NewsSentiment() {
             <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
             Refresh Analysis
           </Button>
+          <Button
+            variant="outline"
+            onClick={() => setUseFastMode((v) => !v)}
+            title="Toggle cost saver mode"
+          >
+            {useFastMode ? 'Cost Saver: On' : 'Cost Saver: Off'}
+          </Button>
         </div>
 
+        <Alert className="mt-3">
+          <AlertDescription className="text-xs">
+            Cost Saver reduces API usage by analyzing fewer articles and using local heuristics. Turn Off to run comprehensive GLM analysis on top articles. Ideal for free APIs and strict rate limits.
+          </AlertDescription>
+        </Alert>
+
         {/* Market Summary Cards */}
-        {marketSummary && (
+        {marketSummary && marketSummary.aggregatedIndex !== undefined && (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {/* Overall Market Sentiment */}
             <Card className="bg-card border-border p-4 shadow-md">
@@ -566,7 +742,12 @@ export default function NewsSentiment() {
                 </div>
 
                 <div className="text-sm text-muted-foreground">
-                  <div>News Articles: {marketSummary.newsCount}</div>
+                  <div>News Articles: {filteredArticles.length} / {useFastMode ? 3 : 10} max (optimized for cost)</div>
+                  {filteredArticles.length < marketSummary.newsCount && (
+                    <div className="text-xs text-green-600">
+                      Showing {filteredArticles.length} most relevant of {marketSummary.newsCount} total
+                    </div>
+                  )}
                 </div>
               </div>
             </Card>
@@ -691,10 +872,26 @@ export default function NewsSentiment() {
               <div>
                 <h4 className="font-medium mb-2">Key Factors</h4>
                 <div className="text-sm text-muted-foreground space-y-1 mb-4">
-                  {(prediction.keyFactors || []).map((factor, index) => (
-                    <div key={index}>• {factor}</div>
-                  ))}
+                  {prediction.keyFactorsDetailed ? (
+                    <>
+                      {(prediction.keyFactorsDetailed.positive || []).map((f, i) => (<div key={`p-${i}`} className="text-green-600">• {f}</div>))}
+                      {(prediction.keyFactorsDetailed.neutral || []).map((f, i) => (<div key={`n-${i}`} className="text-yellow-600">• {f}</div>))}
+                      {(prediction.keyFactorsDetailed.negative || []).map((f, i) => (<div key={`m-${i}`} className="text-red-600">• {f}</div>))}
+                    </>
+                  ) : (
+                    (prediction.keyFactors || []).map((factor, index) => (
+                      <div key={index}>• {factor}</div>
+                    ))
+                  )}
                 </div>
+                {prediction.riskFactors && prediction.riskFactors.length > 0 && (
+                  <div className="mt-2">
+                    <h4 className="font-medium mb-2">Risk Factors</h4>
+                    <div className="text-sm text-muted-foreground space-y-1">
+                      {prediction.riskFactors.map((risk, i) => (<div key={`r-${i}`}>• {risk}</div>))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Column 3: Segment Breakdown */}
@@ -712,6 +909,16 @@ export default function NewsSentiment() {
                   ))}
                 </div>
               </div>
+              {prediction.marketSignals && (
+                <div>
+                  <h4 className="font-medium mb-2">Market Signals</h4>
+                  <div className="text-sm text-muted-foreground grid grid-cols-3 gap-3">
+                    <div><div className="font-medium">Volume</div><div>{prediction.marketSignals.volume}</div></div>
+                    <div><div className="font-medium">Volatility</div><div>{prediction.marketSignals.volatility}</div></div>
+                    <div><div className="font-medium">Momentum</div><div>{prediction.marketSignals.momentum}</div></div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Row 2: Top Headlines */}
@@ -901,13 +1108,17 @@ export default function NewsSentiment() {
                     </div>
 
                     <p className="text-sm text-muted-foreground mb-3">
-                      {getPreviewText(article)}
+                      {expandedArticles.has(article.id)
+                        ? getShortPreview(article)
+                        : `${getShortPreview(article).substring(0, 100)}${getShortPreview(article).length > 100 ? '...' : ''}`
+                      }
                     </p>
+
 
                     {expandedArticles.has(article.id) && (
                       <div className="mt-4 p-4 bg-muted/50 rounded-lg space-y-4">
                         <div className="space-y-2">
-                          <div className="font-medium text-sm">Full Content:</div>
+                          <div className="font-medium text-sm">Full Summary:</div>
                           <div className="text-sm text-muted-foreground">
                             {cleanContent(article.content) || article.summary}
                           </div>
@@ -930,9 +1141,15 @@ export default function NewsSentiment() {
                         {article.analysis && (
                           <div className="space-y-3">
                             <div className="font-medium text-sm">AI Analysis:</div>
-                            {(article.analysis.reasoning || []).length > 0 && (
+                            <div className="text-xs text-muted-foreground">
+                              Model: {formatModelMeta(article.analysis?.meta)} · Confidence: {Math.round((article.confidence || 0) * 100)}%
+                            </div>
+                            <p className="text-sm text-foreground mt-2">
+                              {getAnalysisParagraph(article)}
+                            </p>
+                            {((article.analysis.reasoning || []).filter(r => !/parse error|unstructured/i.test(r)).length > 0) && (
                               <div className="text-sm text-muted-foreground space-y-1">
-                                {(article.analysis.reasoning || []).map((reason, idx) => (
+                                {(article.analysis.reasoning || []).filter(r => !/parse error|unstructured/i.test(r)).map((reason, idx) => (
                                   <div key={idx}>• {reason}</div>
                                 ))}
                               </div>
@@ -950,6 +1167,7 @@ export default function NewsSentiment() {
                                 </div>
                               </div>
                             )}
+
 
                             {article.analysis.emotionalIndicators && (
                               <div className="space-y-2">
@@ -972,7 +1190,7 @@ export default function NewsSentiment() {
                               <div className="font-medium text-sm">Impact:</div>
                               <div className="text-sm text-muted-foreground">
                                 <div>Level: {article.analysis.impactLevel || 'Unknown'}</div>
-                                <div>Segment: {article.analysis.marketSegment || 'General'}</div>
+                                <div>Segment: {getCategoryLabel(article.category)}</div>
                                 <div className="flex items-center gap-2">
                                   Direction: {getSentimentIcon(article.sentimentLabel)}
                                   <span className="capitalize">{article.sentimentLabel}</span>
@@ -996,13 +1214,11 @@ export default function NewsSentiment() {
                       {expandedArticles.has(article.id) ? 'Hide' : 'Show'} Details
                     </Button>
 
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => window.open(article.url, '_blank')}
-                    >
-                      <ExternalLink className="h-4 w-4 mr-2" />
-                      Read More
+                    <Button asChild variant="outline" size="sm">
+                      <a href={article.url} target="_blank" rel="noopener noreferrer">
+                        <ExternalLink className="h-4 w-4 mr-2" />
+                        Read More
+                      </a>
                     </Button>
                   </div>
                 </div>

@@ -15,6 +15,11 @@ export interface ScamDetectionResult {
 
 export class ScamDetectionEngine {
   async analyzeToken(token: TokenInfo, userAddress: string): Promise<ScamDetectionResult> {
+    const { aiCache, CacheKeys } = await import('../shared/cache')
+    const cacheKey = CacheKeys.SCAM_ANALYSIS(token.address)
+    const cached = aiCache.get<ScamDetectionResult>(cacheKey)
+    if (cached) return cached
+
     const features = await extractFeatures(token, userAddress)
     const simulation = await simulateHoneypot(token, features)
     const rules = await applyRules({ ...features })
@@ -32,7 +37,7 @@ export class ScamDetectionEngine {
     const reasons = rules.reasons.length > 0 ? rules.reasons : ['Analyzed']
     const confidencePct = Math.min(95, Math.max(50, Math.round(ml.confidence)))
 
-    return {
+    const result: ScamDetectionResult = {
       tokenAddress: token.address,
       symbol: token.symbol,
       riskLevel,
@@ -50,5 +55,9 @@ export class ScamDetectionEngine {
         }
       }
     }
+
+    aiCache.set(cacheKey, result, 5 * 60 * 1000)
+    
+    return result
   }
 }

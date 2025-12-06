@@ -89,6 +89,7 @@ export default function WhaleMovement() {
 
   const loadWhaleMovements = async (address: string) => {
     try {
+      const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
       setLoading(true);
       setError(null);
 
@@ -118,9 +119,30 @@ export default function WhaleMovement() {
 
       setWhaleMovements(realWhaleMovements);
       setSummary(whaleSummary);
+      const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      const duration = Math.round((t1 - t0));
+      try {
+        await fetch('/api/metrics', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: 'tab_whale_loaded',
+            metric: 'ui_whale_switch_time_ms',
+            value: duration,
+            payload: { address, events: realWhaleMovements.length }
+          })
+        })
+      } catch {}
     } catch (err) {
       console.error('❌ Failed to load whale movements:', err);
       setError(err instanceof Error ? err.message : "Failed to load whale movements");
+      try {
+        await fetch('/api/metrics', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: 'tab_whale_failed', counter: 'ui_tab_load_failed', payload: { address } })
+        })
+      } catch {}
     } finally {
       setLoading(false);
     }

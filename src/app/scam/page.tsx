@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,17 +20,14 @@ import {
   RefreshCw, 
   Search, 
   AlertCircle, 
-  CheckCircle, 
-  XCircle, 
   ChevronDown, 
   ChevronUp,
-  Filter,
   ArrowUpDown,
   LayoutList,
   LayoutGrid,
   ChevronLeft,
   ChevronRight,
-  MoreHorizontal
+  CheckCircle
 } from "lucide-react";
 import { useWallet } from "@/contexts/wallet-context";
 import { WalletAPI } from "@/lib/api/wallet";
@@ -43,7 +40,23 @@ interface FlaggedToken {
   score: number;
   reasons?: string[];
   confidencePct?: number;
-  evidence?: any;
+  evidence?: ScamEvidence;
+}
+
+type ScamEvidence = {
+  staticCode?: {
+    suspiciousFunctions?: string[];
+    verified?: boolean;
+    hasWeirdChars?: boolean;
+    hasLongName?: boolean;
+  };
+  features?: Record<string, unknown>;
+  external?: Record<string, unknown>;
+  simulation?: Record<string, unknown>;
+  rules?: Record<string, unknown>;
+  ml?: { contributions?: Array<{ feature?: string }> } & Record<string, unknown>;
+  holderDistribution?: { top1?: number; top5?: number; totalHolders?: number };
+  [key: string]: unknown;
 }
 
 export default function ScamTokenAlertPage() {
@@ -81,20 +94,51 @@ export default function ScamTokenAlertPage() {
 
   const loadScamData = async (address: string) => {
     try {
+      const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
       setLoading(true);
       setError(null);
-      const result = await WalletAPI.analyzeWallet(address, '24h');
+      try {
+        await WalletAPI.getPortfolioTokens(address);
+      } catch {}
+      const cachedTokens = WalletAPI.getCachedPortfolioTokens(address);
+      const result = (await WalletAPI.analyzeWallet(address, '24h', undefined, cachedTokens)) as {
+        success: boolean;
+        error?: string;
+        data?: {
+          scam?: {
+            flaggedTokens?: FlaggedToken[];
+            highRiskCount?: number;
+            mediumRiskCount?: number;
+            lowRiskCount?: number;
+            totalTokens?: number;
+          };
+        };
+      };
+      console.log('🛡️ Scam API Result:', {
+        success: result?.success,
+        flaggedCount: Array.isArray(result?.data?.scam?.flaggedTokens) ? result.data.scam.flaggedTokens.length : 0,
+        stats: {
+          high: result?.data?.scam?.highRiskCount,
+          medium: result?.data?.scam?.mediumRiskCount,
+          low: result?.data?.scam?.lowRiskCount,
+          total: result?.data?.scam?.totalTokens
+        }
+      });
       if (!result?.success) {
         throw new Error(result?.error || 'Failed to fetch analysis');
       }
 
       const scam = result.data?.scam || {};
-      let tokens: FlaggedToken[] = Array.isArray(scam.flaggedTokens) ? scam.flaggedTokens : [];
+      const tokens: FlaggedToken[] = Array.isArray(scam.flaggedTokens) ? scam.flaggedTokens as FlaggedToken[] : [];
 
-      // Remove duplicates based on tokenAddress to prevent React key errors
-      const uniqueTokens = tokens.filter((token, index, arr) =>
-        arr.findIndex(t => t.tokenAddress === token.tokenAddress) === index
-      );
+      // Robust dedup: prefer tokenAddress, fallback to symbol
+      const uniqueTokens = tokens.filter((token, index, arr) => {
+        const key = (token.tokenAddress || '').toLowerCase() || (token.symbol || '').toLowerCase();
+        return arr.findIndex(t => {
+          const otherKey = (t.tokenAddress || '').toLowerCase() || (t.symbol || '').toLowerCase();
+          return otherKey === key;
+        }) === index;
+      });
 
       if (tokens.length !== uniqueTokens.length) {
         console.log(`⚠️ Removed ${tokens.length - uniqueTokens.length} duplicate tokens from scam results`);
@@ -105,10 +149,31 @@ export default function ScamTokenAlertPage() {
         highRiskCount: scam.highRiskCount || 0,
         mediumRiskCount: scam.mediumRiskCount || 0,
         lowRiskCount: scam.lowRiskCount || 0,
-        totalTokens: scam.totalTokens || 0,
+        totalTokens: scam.totalTokens || tokens.length,
       });
+      const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      const duration = Math.round((t1 - t0));
+      try {
+        await fetch('/api/metrics', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            name: 'tab_scam_loaded',
+            metric: 'ui_scam_switch_time_ms',
+            value: duration,
+            payload: { address, flagged: uniqueTokens.length, stats: { high: scam.highRiskCount || 0, medium: scam.mediumRiskCount || 0, low: scam.lowRiskCount || 0 } }
+          })
+        })
+      } catch {}
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load scam alerts');
+      try {
+        await fetch('/api/metrics', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: 'tab_scam_failed', counter: 'ui_tab_load_failed', payload: { address } })
+        })
+      } catch {}
     } finally {
       setLoading(false);
     }
@@ -274,9 +339,11 @@ export default function ScamTokenAlertPage() {
                 </div>
                 <h3 className="text-lg font-semibold">No tokens found</h3>
                 <p className="text-muted-foreground max-w-sm mt-1">
-                  {searchTerm || riskFilter !== 'all' 
-                    ? "Try adjusting your search or filters to see more results." 
-                    : "Great news! We didn't detect any flagged tokens in your portfolio."}
+                  {searchTerm || riskFilter !== 'all'
+                    ? "Try adjusting your search or filters to see more results."
+                    : (stats.totalTokens === 0
+                        ? "Scan unavailable or no tokens scanned for this address. Try Refresh or reconnect."
+                        : "Great news! We didn't detect any flagged tokens in your portfolio.")}
                 </p>
                 {(searchTerm || riskFilter !== 'all') && (
                   <Button variant="link" onClick={() => { setSearchTerm(""); setRiskFilter("all"); }} className="mt-2">
@@ -399,7 +466,7 @@ function TokenRiskRow({ token }: { token: FlaggedToken }) {
         <TableCell>
           {typeof token.confidencePct === 'number' ? (
             <Badge variant="secondary" className="text-xs">
-              {Math.round(token.confidencePct)}%
+              {Math.round((token.confidencePct <= 1 ? token.confidencePct * 100 : token.confidencePct))}%
             </Badge>
           ) : (
             <span className="text-muted-foreground text-xs">-</span>
@@ -412,9 +479,9 @@ function TokenRiskRow({ token }: { token: FlaggedToken }) {
              ) : (
                <Badge variant="outline" className="text-[10px] px-1 h-5 text-muted-foreground border-muted">Unverified</Badge>
              )}
-             {(token.evidence?.external?.coingeckoListed || token.evidence?.features?.externalListings > 0) && (
-               <Badge variant="outline" className="text-[10px] px-1 h-5 text-blue-600 border-blue-200 dark:border-blue-900">Listed</Badge>
-             )}
+            {(token.evidence?.external?.coingeckoListed || Number(token.evidence?.features?.externalListings || 0) > 0) && (
+              <Badge variant="outline" className="text-[10px] px-1 h-5 text-blue-600 border-blue-200 dark:border-blue-900">Listed</Badge>
+            )}
           </div>
         </TableCell>
         <TableCell className="text-right">
@@ -423,30 +490,33 @@ function TokenRiskRow({ token }: { token: FlaggedToken }) {
           </Button>
         </TableCell>
       </TableRow>
-      {expanded && (
-        <TableRow className="bg-muted/30 hover:bg-muted/30">
-          <TableCell colSpan={6} className="p-0">
-            <div className="p-4 border-t">
-               <TokenEvidenceDetail token={token} />
+      <TableRow className="bg-muted/30 hover:bg-muted/30">
+        <TableCell colSpan={6} className="p-0">
+          <div className={cn("transition-all duration-300 overflow-hidden", expanded ? "max-h-[600px] opacity-100" : "max-h-0 opacity-0")}> 
+            <div className="p-4 border-t space-y-3">
+              <div className="text-xs text-muted-foreground font-mono break-all">
+                {token.tokenAddress}
+              </div>
+              <TokenEvidenceDetail token={token} />
             </div>
-          </TableCell>
-        </TableRow>
-      )}
+          </div>
+        </TableCell>
+      </TableRow>
     </>
   );
 }
 
 // Extracted evidence display to reusable component
 function TokenEvidenceDetail({ token }: { token: FlaggedToken }) {
-  const ev = token.evidence || {};
-  const features = ev.features || {};
-  const simulation = ev.simulation || {};
-  const rules = ev.rules || {};
-  const ml = ev.ml || {};
-  const holder = ev.holderDistribution || {
-    top1: features.holderTop1Pct,
-    top5: features.holderTop5Pct,
-    totalHolders: features.totalHolders
+  const ev = (token.evidence || {}) as ScamEvidence;
+  const features = (ev.features || {}) as Record<string, unknown>;
+  const simulation = (ev.simulation || {}) as Record<string, unknown>;
+  const rules = (ev.rules || {}) as Record<string, unknown>;
+  const ml = (ev.ml || {}) as { contributions?: Array<{ feature?: string }> };
+  const holder: { top1?: number; top5?: number; totalHolders?: number } = ev.holderDistribution || {
+    top1: typeof (features as Record<string, unknown>)['holderTop1Pct'] === 'number' ? ((features as Record<string, unknown>)['holderTop1Pct'] as number) : undefined,
+    top5: typeof (features as Record<string, unknown>)['holderTop5Pct'] === 'number' ? ((features as Record<string, unknown>)['holderTop5Pct'] as number) : undefined,
+    totalHolders: typeof (features as Record<string, unknown>)['totalHolders'] === 'number' ? ((features as Record<string, unknown>)['totalHolders'] as number) : undefined
   };
 
   return (
@@ -456,21 +526,21 @@ function TokenEvidenceDetail({ token }: { token: FlaggedToken }) {
           <span className="text-xs text-muted-foreground block">Simulation</span>
           <div className="flex flex-wrap gap-1">
              <Badge variant="outline" className="text-xs">Can Sell: {simulation.canSell === false ? 'No' : 'Yes'}</Badge>
-             {simulation.revertReason && <Badge variant="outline" className="text-xs text-destructive">Revert</Badge>}
+             {Boolean((simulation as Record<string, unknown>)['revertReason']) && <Badge variant="outline" className="text-xs text-destructive">Revert</Badge>}
           </div>
         </div>
         <div className="space-y-1">
           <span className="text-xs text-muted-foreground block">Trading</span>
            <div className="flex flex-wrap gap-1">
-            {typeof simulation.priceImpactPct === 'number' && <Badge variant="outline" className="text-xs">Impact: {Math.round(simulation.priceImpactPct)}%</Badge>}
-            {typeof simulation.slippagePct === 'number' && <Badge variant="outline" className="text-xs">Slip: {Math.round(simulation.slippagePct)}%</Badge>}
+            {typeof (simulation as Record<string, unknown>)['priceImpactPct'] === 'number' && <Badge variant="outline" className="text-xs">Impact: {Math.round(((simulation as Record<string, unknown>)['priceImpactPct'] as number))}%</Badge>}
+            {typeof (simulation as Record<string, unknown>)['slippagePct'] === 'number' && <Badge variant="outline" className="text-xs">Slip: {Math.round(((simulation as Record<string, unknown>)['slippagePct'] as number))}%</Badge>}
           </div>
         </div>
         <div className="space-y-1">
           <span className="text-xs text-muted-foreground block">Holders</span>
           <div className="flex flex-wrap gap-1">
-            <Badge variant="outline" className="text-xs">Top1: {holder?.top1 ?? 0}%</Badge>
-            <Badge variant="outline" className="text-xs">Total: {holder?.totalHolders ?? 0}</Badge>
+            <Badge variant="outline" className="text-xs">Top1: {String(holder?.top1 ?? 0)}%</Badge>
+            <Badge variant="outline" className="text-xs">Total: {String(holder?.totalHolders ?? 0)}</Badge>
           </div>
         </div>
         <div className="space-y-1">
@@ -516,7 +586,7 @@ function TokenEvidenceDetail({ token }: { token: FlaggedToken }) {
           <div className="space-y-1">
              <div className="text-xs font-medium text-muted-foreground">AI Factors</div>
              <div className="flex flex-wrap gap-1">
-              {ml.contributions.slice(0, 3).map((c: any, i: number) => (
+              {ml.contributions.slice(0, 3).map((c: { feature?: string }, i: number) => (
                 <Badge key={i} variant="secondary" className="text-[10px]">{c.feature}</Badge>
               ))}
               {ml.contributions.length > 3 && (
@@ -558,11 +628,11 @@ function TokenRiskCard({ token }: { token: FlaggedToken }) {
               <h3 className="font-bold text-lg">{token.symbol}</h3>
               {typeof token.confidencePct === 'number' && (
                 <Badge variant="outline" className="text-xs">
-                  {Math.round(token.confidencePct)}%
+                  {Math.round((token.confidencePct <= 1 ? token.confidencePct * 100 : token.confidencePct))}%
                 </Badge>
               )}
             </div>
-            <p className="text-xs text-muted-foreground truncate max-w-[140px]" title={token.tokenAddress}>
+            <p className="text-xs text-muted-foreground truncate max-w-[180px]" title={token.tokenAddress}>
               {token.tokenAddress.slice(0, 6)}...{token.tokenAddress.slice(-4)}
             </p>
           </div>
@@ -588,18 +658,19 @@ function TokenRiskCard({ token }: { token: FlaggedToken }) {
             {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
           </Button>
 
-          {expanded && (
-            <div className="mt-3">
+          <div className={cn("mt-3 transition-all duration-300 overflow-hidden", expanded ? "max-h-[600px] opacity-100" : "max-h-0 opacity-0")}> 
+            <div className="space-y-2">
+              <div className="text-xs text-muted-foreground font-mono break-all">{token.tokenAddress}</div>
               <TokenEvidenceDetail token={token} />
             </div>
-          )}
+          </div>
         </div>
       </CardContent>
     </Card>
   );
 }
 
-function StatCard({ title, value, icon: Icon, color, bg }: { title: string, value: number, icon: any, color: string, bg: string }) {
+function StatCard({ title, value, icon: Icon, color, bg }: { title: string, value: number, icon: React.ElementType, color: string, bg: string }) {
   return (
     <Card>
       <CardContent className="p-6 flex items-center justify-between">

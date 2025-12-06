@@ -7,7 +7,8 @@ export interface RulesResult {
   details: Record<string, unknown>
 }
 
-export async function applyRules(features: TokenFeatures, token?: TokenInfo): Promise<RulesResult> {
+export async function applyRules(features: TokenFeatures, _token?: TokenInfo): Promise<RulesResult> {
+  void _token;
   let score = 0
   const reasons: string[] = []
   let signal: 'IMMEDIATE' | 'ESCALATE' | null = null

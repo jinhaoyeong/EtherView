@@ -38,6 +38,8 @@ export const ETHEREUM_TOKEN_WHITELIST: Record<string, { symbol: string; name: st
 export class WalletAPI {
   // Cache storage for API responses
   private static cache = new Map<string, { data: any; expiry: number; cachedAt: number }>();
+  private static portfolioTokenCache = new Map<string, { data: any[]; ts: number }>();
+  private static inflightPortfolioTokenReq = new Map<string, Promise<any[]>>();
 
   // Helper function to build proxy URLs
   private static buildProxyUrl(params: Record<string, string>): string {
@@ -59,6 +61,13 @@ export class WalletAPI {
       if (u && u.trim() !== '') return u;
     }
     return `http://localhost:${process.env.PORT || 3000}`;
+  }
+
+  static getCachedPortfolioTokens(address: string): any[] {
+    const key = (address || '').toLowerCase();
+    const entry = this.portfolioTokenCache.get(key);
+    if (!entry) return [];
+    return Array.isArray(entry.data) ? entry.data : [];
   }
 
   // 🛡️ ERROR MONITORING: Track API performance and errors
@@ -1096,33 +1105,38 @@ export class WalletAPI {
       const ETHERSCAN_API_KEY = process.env.NEXT_PUBLIC_ETHERSCAN_API_KEY ||
                                 process.env.ETHERSCAN_API_KEY ||
                                 'VMUSQTMBBDUWZJ4VG2FCMAFCMBMRXYSGGH';
-      const HAS_ALCHEMY = !!process.env.ALCHEMY_API_KEY;
-
-      if (!HAS_ALCHEMY) {
-        const cov = await this.getAllTokensCovalent(address);
-        if (Array.isArray(cov) && cov.length > 0) return cov;
-      }
+      
+      // NOTE: Removed Covalent short-circuit here because getAllTokens is used in parallel with getAllTokensCovalent
+      // in getPortfolioTokens. We want this function to focus on Etherscan/Alchemy discovery.
 
       console.log('⚡ FAST-TOKENS: Fetching token contracts...');
       let allTransactions: any[] = [];
 
       try {
         const offset = 200;
-        const maxPages = 4;
-        for (let page = 1; page <= maxPages; page++) {
-          const url = typeof window === 'undefined'
-            ? `https://api.etherscan.io/v2/api?chainid=1&module=account&action=tokentx&address=${address}&page=${page}&offset=${offset}&sort=desc&apikey=${ETHERSCAN_API_KEY}`
-            : `${window.location.origin}/api/etherscan-proxy?chainid=1&module=account&action=tokentx&address=${address}&page=${page}&offset=${offset}&sort=desc`;
-          const txResponse = await fetch(url, {
-            headers: { 'Accept': 'application/json' },
-            signal: AbortSignal.timeout(5000)
-          });
-          if (!txResponse.ok) break;
-          const txData = await txResponse.json();
-          if (txData.status !== '1' || !Array.isArray(txData.result)) break;
-          allTransactions = allTransactions.concat(txData.result);
-          if (txData.result.length < offset) break;
-          await new Promise(resolve => setTimeout(resolve, 400));
+        const maxPages = 15;
+        const batchSize = 6;
+        for (let start = 1; start <= maxPages; start += batchSize) {
+          const end = Math.min(start + batchSize - 1, maxPages);
+          const batchPromises = [] as Promise<number>[];
+          for (let page = start; page <= end; page++) {
+            const url = typeof window === 'undefined'
+              ? `https://api.etherscan.io/v2/api?chainid=1&module=account&action=tokentx&address=${address}&page=${page}&offset=${offset}&sort=desc&apikey=${ETHERSCAN_API_KEY}`
+              : `${window.location.origin}/api/etherscan-proxy?chainid=1&module=account&action=tokentx&address=${address}&page=${page}&offset=${offset}&sort=desc`;
+            const p = fetch(url, { headers: { 'Accept': 'application/json' }, signal: AbortSignal.timeout(8000) })
+              .then(res => res.ok ? res.json() : null)
+              .then(data => {
+                if (!data || data.status !== '1' || !Array.isArray(data.result)) return -1;
+                allTransactions = allTransactions.concat(data.result);
+                return data.result.length;
+              })
+              .catch(() => -1);
+            batchPromises.push(p);
+          }
+          const lengths = await Promise.all(batchPromises);
+          const reachedEnd = lengths.some(len => len > -1 && len < offset);
+          if (reachedEnd) break;
+          await new Promise(resolve => setTimeout(resolve, 150));
         }
       } catch (error) {
         return await this.fetchTopTokensOnlyFast(address);
@@ -1153,32 +1167,36 @@ export class WalletAPI {
       const { batchBalanceOf } = await import('../eth/multicall');
       const balanceMap = await batchBalanceOf(address, tokens.map(t => ({ address: t.address, decimals: t.decimals })));
 
-      const pricedPromises = tokens.map(async (token) => {
+      const withBalance = tokens.map(token => {
         const balStr = balanceMap[token.address.toLowerCase()] || '0';
         const balanceNum = parseFloat(balStr);
-        if (balanceNum <= 0) return null;
-        let priceUSD = 0;
-        try {
-          priceUSD = await this.getTokenPrice(token.symbol, token.address);
-        } catch {}
-        const valueUSD = priceUSD * balanceNum;
+        if (isNaN(balanceNum) || balanceNum <= 0) return null;
+        return { ...token, balanceNum };
+      }).filter(Boolean) as Array<{ address: string; symbol: string; name: string; decimals: number; balanceNum: number }>;
+
+      const needPricing = withBalance.map(t => t.address.toLowerCase());
+      let priceByAddr: Record<string, number> = {};
+      try {
+        priceByAddr = await priceCache.fetchTokenPricesByAddress(needPricing);
+      } catch {}
+
+      const validTokens = withBalance.map(t => {
+        const priceUSD = priceByAddr[t.address.toLowerCase()] || 0;
+        const valueUSD = priceUSD * t.balanceNum;
         return {
-          ...token,
-          balance: balanceNum.toString(),
+          symbol: t.symbol,
+          name: t.name,
+          address: t.address,
+          decimals: t.decimals,
+          balance: t.balanceNum.toString(),
           priceUSD,
           valueUSD,
           hasNoPriceData: priceUSD === 0,
-          verified: !!ETHEREUM_TOKEN_WHITELIST[token.address.toLowerCase()],
+          verified: !!ETHEREUM_TOKEN_WHITELIST[t.address.toLowerCase()],
           dataSource: 'multicall',
           lastUpdated: Date.now()
         };
-      });
-
-    const settled = await Promise.allSettled(pricedPromises);
-    const validTokens = settled
-      .filter((r): r is PromiseFulfilledResult<any> => r.status === 'fulfilled' && r.value !== null)
-      .map(r => r.value)
-      .filter((t: any) => parseFloat(t.balance) > 0);
+      }).filter((t: any) => parseFloat(t.balance) > 0);
 
     console.log(`⚡ FAST-TOKENS: Found ${validTokens.length} tokens with positive balances`);
     console.log(`📋 TOKEN DEBUG: Final token list:`, validTokens.map(t => ({
@@ -1269,137 +1287,217 @@ export class WalletAPI {
     }
   }
 
-  static async getPortfolioTokens(address: string): Promise<any[]> {
+  static async getAllTokensEthplorer(address: string): Promise<any[]> {
     try {
-      const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T | '__timeout__'> => {
-        return Promise.race([p, new Promise(resolve => setTimeout(() => resolve('__timeout__' as any), ms))]) as any;
-      };
+      const origin = typeof window !== 'undefined' ? window.location.origin : WalletAPI.getBaseURL();
+      const res = await fetch(`${origin}/api/ethplorer-proxy?addr=${address}`, { headers: { 'Accept': 'application/json' } });
+      if (!res.ok) return [];
+      const json = await res.json();
+      const data: any[] = Array.isArray(json?.tokens) ? json.tokens : [];
 
-      const debankP = this.getAllTokensDebank(address);
-      const fastP = this.getAllTokens(address);
-      const zapperP = this.getAllTokensZapper(address);
-      const covalentP = this.getAllTokensCovalent(address);
+      const tokens = data.map((t: any) => {
+        const addr = (t.address || t.id || '').toLowerCase();
+        const wl = ETHEREUM_TOKEN_WHITELIST[addr];
+        const symbol = t.symbol || wl?.symbol || 'UNKNOWN';
+        const name = t.name || wl?.name || symbol;
+        const decimals = t.decimals || wl?.decimals || 18;
+        const amount = typeof t.amount === 'number' ? t.amount : parseFloat(t.amount || '0');
+        const price = typeof t.price === 'number' ? t.price : 0;
+        return {
+          symbol,
+          name,
+          address: addr,
+          decimals,
+          balance: amount.toString(),
+          priceUSD: price,
+          valueUSD: price * amount,
+          verified: !!wl,
+          hasNoPriceData: price === 0,
+          chain: 'eth'
+        };
+      });
 
-      const merged = new Map<string, any>();
-      const addAll = (arr: any[]) => {
-        for (const t of arr) {
-          const key = t.address ? t.address.toLowerCase() : `${(t.symbol || 'unknown').toLowerCase()}_${(t.chain || 'eth')}`;
-          if (!merged.has(key)) {
-            merged.set(key, t);
-          } else {
-            const prev = merged.get(key);
-            merged.set(key, {
-              ...prev,
-              ...t,
-              valueUSD: typeof t.valueUSD === 'number' ? t.valueUSD : prev.valueUSD,
-              priceUSD: typeof t.priceUSD === 'number' ? t.priceUSD : prev.priceUSD,
-              balance: (t.balance || prev.balance || '0').toString()
-            });
-          }
-        }
-      };
-
-      const initialResults = await Promise.allSettled([
-        withTimeout(debankP, 9000),
-        withTimeout(fastP, 8000),
-        withTimeout(zapperP, 9000),
-        withTimeout(covalentP, 9000)
-      ]);
-
-      let gotAny = false;
-      for (const r of initialResults) {
-        if (r.status === 'fulfilled' && r.value !== '__timeout__' && Array.isArray(r.value)) {
-          if (r.value.length > 0) gotAny = true;
-          addAll(r.value);
-        }
-      }
-
-      if (!gotAny) {
-        const fallback = await withTimeout(fastP, 7000);
-        if (fallback !== '__timeout__' && Array.isArray(fallback)) {
-          addAll(fallback);
-        }
-      }
-
-      // Attempt to backfill missing prices using address-based batch fetch
-      const needPricingAddrs = Array.from(merged.values())
-        .map((t: any) => (typeof t.address === 'string' ? t.address.toLowerCase() : ''))
-        .filter((addr: string) => !!addr)
-        .filter((addr: string, idx: number, arr: string[]) => arr.indexOf(addr) === idx);
-
-      if (needPricingAddrs.length > 0) {
+      // Try to enrich pricing for zero-priced tokens
+      const needPricing = tokens.filter(t => (typeof t.priceUSD !== 'number' || t.priceUSD === 0) && t.address).map(t => t.address.toLowerCase());
+      if (needPricing.length > 0) {
         try {
-          const priceMap = await priceCache.fetchTokenPricesByAddress(needPricingAddrs);
-          for (const [key, tok] of merged.entries()) {
-            const addr = typeof tok.address === 'string' ? tok.address.toLowerCase() : '';
-            if (addr) {
-              const currentPrice = typeof tok.priceUSD === 'number' ? tok.priceUSD : 0;
-              const fetchedPrice = priceMap[addr];
-              if ((currentPrice === 0 || !isFinite(currentPrice)) && typeof fetchedPrice === 'number' && fetchedPrice > 0) {
-                const balNum = parseFloat((tok.balance || '0').toString()) || 0;
-                merged.set(key, {
-                  ...tok,
-                  priceUSD: fetchedPrice,
-                  valueUSD: fetchedPrice * balNum,
-                  hasNoPriceData: false
-                });
-              }
+          const priceMap = await priceCache.fetchTokenPricesByAddress(needPricing);
+          for (const tok of tokens) {
+            const addr = tok.address?.toLowerCase();
+            const p = addr ? priceMap[addr] : 0;
+            if (typeof p === 'number' && p > 0) {
+              const balNum = parseFloat(tok.balance || '0');
+              tok.priceUSD = p;
+              tok.valueUSD = p * balNum;
+              tok.hasNoPriceData = false;
             }
           }
         } catch {}
       }
 
-      // Normalize output shape with validation
-      const normalized = Array.from(merged.values()).map((t: any) => {
-        const symbol = typeof t.symbol === 'string' ? t.symbol : 'UNKNOWN';
-        const name = typeof t.name === 'string' ? t.name : symbol;
-        const address = typeof t.address === 'string' ? t.address.toLowerCase() : '';
-        const decimals = typeof t.decimals === 'number' ? t.decimals : 18;
-        const balanceStr = (typeof t.balance === 'string' || typeof t.balance === 'number') ? t.balance.toString() : '0';
-        const balanceNum = parseFloat(balanceStr) || 0;
-        const priceUSD = typeof t.priceUSD === 'number' ? t.priceUSD : 0;
-        const valueUSD = typeof t.valueUSD === 'number' ? t.valueUSD : (priceUSD * balanceNum);
-        const verified = !!t.verified;
-        const chain = (t.chain || 'eth').toLowerCase();
+      return tokens;
+    } catch {
+      return [];
+    }
+  }
 
-        return {
-          symbol,
-          name,
-          address,
-          decimals,
-          balance: balanceStr,
-          priceUSD,
-          valueUSD,
-          verified,
-          hasNoPriceData: priceUSD === 0,
-          chain
+  static async getPortfolioTokens(address: string): Promise<any[]> {
+    try {
+      const addrKey = (address || '').toLowerCase();
+      const cached = this.portfolioTokenCache.get(addrKey);
+      if (cached && (Date.now() - cached.ts) < 30000) {
+        return cached.data;
+      }
+
+      const existing = this.inflightPortfolioTokenReq.get(addrKey);
+      if (existing) {
+        return await existing;
+      }
+
+      const task = (async () => {
+        const withTimeout = <T>(p: Promise<T>, ms: number): Promise<T | '__timeout__'> => {
+          return Promise.race([p, new Promise(resolve => setTimeout(() => resolve('__timeout__' as any), ms))]) as any;
         };
-      }).filter((t: any) => t.symbol && (t.address || t.chain));
 
-      // Enforce Ethereum mainnet only
-      const ethOnly = normalized.filter((t: any) => ((t.chain || 'eth') === 'eth'));
+        const debankP = this.getAllTokensDebank(address);
+        const ethplorerP = this.getAllTokensEthplorer(address);
+        const fastP = this.getAllTokens(address);
+        const zapperP = this.getAllTokensZapper(address);
+        const covalentP = this.getAllTokensCovalent(address);
 
-      // Fallback: only fetch individual prices for major/whitelisted tokens
-      for (const tok of ethOnly) {
-        if (tok.priceUSD === 0 && tok.symbol) {
-          const isWhitelisted = !!ETHEREUM_TOKEN_WHITELIST[(tok.address || '').toLowerCase()];
-          const isMajor = WalletAPI.isMajorToken(tok.symbol);
-          if (!isWhitelisted && !isMajor) {
-            continue;
+        const merged = new Map<string, any>();
+        const addAll = (arr: any[]) => {
+          for (const t of arr) {
+            const k = t.address ? t.address.toLowerCase() : `${(t.symbol || 'unknown').toLowerCase()}_${(t.chain || 'eth')}`;
+            if (!merged.has(k)) {
+              merged.set(k, t);
+            } else {
+              const prev = merged.get(k);
+              merged.set(k, {
+                ...prev,
+                ...t,
+                valueUSD: typeof t.valueUSD === 'number' ? t.valueUSD : prev.valueUSD,
+                priceUSD: typeof t.priceUSD === 'number' ? t.priceUSD : prev.priceUSD,
+                balance: (t.balance || prev.balance || '0').toString()
+              });
+            }
           }
+        };
+
+        const initialResults = await Promise.allSettled([
+          withTimeout(debankP, 18000),
+          withTimeout(ethplorerP, 18000),
+          withTimeout(fastP, 18000),
+          withTimeout(zapperP, 18000),
+          withTimeout(covalentP, 18000)
+        ]);
+
+        let gotAny = false;
+        for (const r of initialResults) {
+          if (r.status === 'fulfilled' && r.value !== '__timeout__' && Array.isArray(r.value)) {
+            if (r.value.length > 0) gotAny = true;
+            addAll(r.value);
+          }
+        }
+
+        if (!gotAny) {
+          const fallback = await withTimeout(fastP, 10000);
+          if (fallback !== '__timeout__' && Array.isArray(fallback)) {
+            addAll(fallback);
+          }
+        }
+
+        const needPricingAddrs = Array.from(merged.values())
+          .map((t: any) => (typeof t.address === 'string' ? t.address.toLowerCase() : ''))
+          .filter((addr: string) => !!addr)
+          .filter((addr: string, idx: number, arr: string[]) => arr.indexOf(addr) === idx);
+
+        if (needPricingAddrs.length > 0) {
           try {
-            const p = await this.getTokenPrice(tok.symbol, tok.address);
-            if (typeof p === 'number' && p > 0) {
-              const balNum = parseFloat(tok.balance || '0') || 0;
-              tok.priceUSD = p;
-              tok.valueUSD = p * balNum;
-              tok.hasNoPriceData = false;
+            const priceMap = await priceCache.fetchTokenPricesByAddress(needPricingAddrs);
+            for (const [k, tok] of merged.entries()) {
+              const addr = typeof tok.address === 'string' ? tok.address.toLowerCase() : '';
+              if (addr) {
+                const currentPrice = typeof tok.priceUSD === 'number' ? tok.priceUSD : 0;
+                const fetchedPrice = priceMap[addr];
+                if ((currentPrice === 0 || !isFinite(currentPrice)) && typeof fetchedPrice === 'number' && fetchedPrice > 0) {
+                  const balNum = parseFloat((tok.balance || '0').toString()) || 0;
+                  merged.set(k, {
+                    ...tok,
+                    priceUSD: fetchedPrice,
+                    valueUSD: fetchedPrice * balNum,
+                    hasNoPriceData: false
+                  });
+                }
+              }
             }
           } catch {}
         }
-      }
 
-      return ethOnly.sort((a: any, b: any) => (b.valueUSD || 0) - (a.valueUSD || 0));
+        const normalized = Array.from(merged.values()).map((t: any) => {
+          const symbol = typeof t.symbol === 'string' ? t.symbol : 'UNKNOWN';
+          const name = typeof t.name === 'string' ? t.name : symbol;
+          const addressLower = typeof t.address === 'string' ? t.address.toLowerCase() : '';
+          const decimals = typeof t.decimals === 'number' ? t.decimals : 18;
+          const balanceStr = (typeof t.balance === 'string' || typeof t.balance === 'number') ? t.balance.toString() : '0';
+          const balanceNum = parseFloat(balanceStr) || 0;
+          const priceUSD = typeof t.priceUSD === 'number' ? t.priceUSD : 0;
+          const valueUSD = typeof t.valueUSD === 'number' ? t.valueUSD : (priceUSD * balanceNum);
+          const verified = !!t.verified;
+          const chain = (t.chain || 'eth').toLowerCase();
+
+          return {
+            symbol,
+            name,
+            address: addressLower,
+            decimals,
+            balance: balanceStr,
+            priceUSD,
+            valueUSD,
+            verified,
+            hasNoPriceData: priceUSD === 0,
+            chain
+          };
+        }).filter((t: any) => t.symbol && (t.address || t.chain));
+
+        const ethOnly = normalized.filter((t: any) => ((t.chain || 'eth') === 'eth'));
+
+        for (const tok of ethOnly) {
+          if (tok.priceUSD === 0 && tok.symbol) {
+            const isWhitelisted = !!ETHEREUM_TOKEN_WHITELIST[(tok.address || '').toLowerCase()];
+            const isMajor = WalletAPI.isMajorToken(tok.symbol);
+            if (!isWhitelisted && !isMajor) {
+              continue;
+            }
+            try {
+              const p = await this.getTokenPrice(tok.symbol, tok.address);
+              if (typeof p === 'number' && p > 0) {
+                const balNum = parseFloat(tok.balance || '0') || 0;
+                tok.priceUSD = p;
+                tok.valueUSD = p * balNum;
+                tok.hasNoPriceData = false;
+              }
+            } catch {}
+          }
+        }
+
+        const result = ethOnly.sort((a: any, b: any) => (b.valueUSD || 0) - (a.valueUSD || 0));
+        return result;
+      })();
+
+      this.inflightPortfolioTokenReq.set(addrKey, task);
+      
+      try {
+        // ⚡ RELIABLE: Wait for full aggregation instead of racing against fallback
+        // The user prefers completeness over speed for the overview
+        const res = await task;
+        this.inflightPortfolioTokenReq.delete(addrKey);
+        this.portfolioTokenCache.set(addrKey, { data: res, ts: Date.now() });
+        return res;
+      } catch {
+        this.inflightPortfolioTokenReq.delete(addrKey);
+        return await this.getAllTokens(address);
+      }
     } catch {
       return await this.getAllTokens(address);
     }
@@ -2346,7 +2444,7 @@ export class WalletAPI {
   }
 
   // Comprehensive wallet analysis method with improved abort handling
-  static async analyzeWallet(address: string, timeRange: string = '24h', signal?: AbortSignal): Promise<any> {
+  static async analyzeWallet(address: string, timeRange: string = '24h', signal?: AbortSignal, tokens?: any[]): Promise<any> {
     const controller = new AbortController();
     const finalSignal = signal || controller.signal;
 
@@ -2362,7 +2460,7 @@ export class WalletAPI {
           headers: { 'Content-Type': 'application/json' },
           keepalive: false, // Changed to false to avoid abort issues
           signal: finalSignal,
-          body: JSON.stringify({ walletAddress: address, timeRange })
+          body: JSON.stringify({ walletAddress: address, timeRange, tokens })
         });
 
         if (!response.ok) {

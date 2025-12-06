@@ -8,7 +8,9 @@ export interface HoneypotSimulationResult {
   gasUsed: number
 }
 
-export async function simulateHoneypot(token: TokenInfo, ctx?: unknown): Promise<HoneypotSimulationResult> {
+export async function simulateHoneypot(_token: TokenInfo, _ctx?: unknown): Promise<HoneypotSimulationResult> {
+  void _token;
+  void _ctx;
   return {
     canSell: true,
     revertReason: null,

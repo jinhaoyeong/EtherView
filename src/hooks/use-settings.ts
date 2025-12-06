@@ -86,7 +86,6 @@ export function useSettings() {
       const savedSettings = localStorage.getItem("etherview_settings");
       const loadedSettings = savedSettings ? JSON.parse(savedSettings) : DEFAULT_SETTINGS;
 
-      // Validate and merge with defaults to ensure all properties exist
       const validatedSettings = {
         appearance: { ...DEFAULT_SETTINGS.appearance, ...loadedSettings.appearance },
         display: { ...DEFAULT_SETTINGS.display, ...loadedSettings.display },
@@ -94,12 +93,14 @@ export function useSettings() {
         storage: { ...DEFAULT_SETTINGS.storage, ...loadedSettings.storage }
       };
 
+      const themePref = localStorage.getItem('etherview_theme') || localStorage.getItem('theme');
+      if (themePref === 'light' || themePref === 'dark') {
+        validatedSettings.appearance.theme = themePref as Theme;
+      }
+
       setSettings(validatedSettings);
 
-      // Apply theme immediately
-      if (validatedSettings.appearance.theme) {
-        themeManager.setTheme(validatedSettings.appearance.theme);
-      }
+      themeManager.setTheme(validatedSettings.appearance.theme);
 
     } catch (err) {
       setError("Failed to load settings");
@@ -147,7 +148,7 @@ export function useSettings() {
   const updateSetting = useCallback((
     category: keyof UserSettings,
     key: string,
-    value: any
+    value: unknown
   ) => {
     if (!settings) return;
 
@@ -161,13 +162,14 @@ export function useSettings() {
 
     // Apply theme immediately if it's the theme setting
     if (category === 'appearance' && key === 'theme') {
-      themeManager.setTheme(value);
+      const v = typeof value === 'string' && (value === 'light' || value === 'dark' || value === 'system') ? value : 'system';
+      themeManager.setTheme(v as Theme);
     }
 
     // Save to localStorage
     localStorage.setItem("etherview_settings", JSON.stringify(newSettings));
     setSettings(newSettings);
-  }, [settings, themeManager]);
+  }, [settings]);
 
   // Reset to defaults
   const resetSettings = useCallback(() => {
@@ -198,18 +200,19 @@ export function useSettings() {
   }, [settings]);
 
   // Import settings
-  const importSettings = useCallback((importedData: any) => {
+  const importSettings = useCallback((importedData: unknown) => {
     try {
-      if (!importedData.settings) {
+      const data = importedData as { settings?: Partial<UserSettings> };
+      if (!data.settings) {
         throw new Error("Invalid settings file format");
       }
 
       // Validate imported settings
       const validatedSettings = {
-        appearance: { ...DEFAULT_SETTINGS.appearance, ...importedData.settings.appearance },
-        display: { ...DEFAULT_SETTINGS.display, ...importedData.settings.display },
-        data: { ...DEFAULT_SETTINGS.data, ...importedData.settings.data },
-        storage: { ...DEFAULT_SETTINGS.storage, ...importedData.settings.storage }
+        appearance: { ...DEFAULT_SETTINGS.appearance, ...(data.settings.appearance || {}) },
+        display: { ...DEFAULT_SETTINGS.display, ...(data.settings.display || {}) },
+        data: { ...DEFAULT_SETTINGS.data, ...(data.settings.data || {}) },
+        storage: { ...DEFAULT_SETTINGS.storage, ...(data.settings.storage || {}) }
       };
 
       saveSettings(validatedSettings);
@@ -225,7 +228,7 @@ export function useSettings() {
   const clearAllData = useCallback(() => {
     try {
       // Get the wallet address before clearing (in case we need to preserve it for disconnect logic)
-      const walletAddress = localStorage.getItem("etherview_wallet");
+      
 
       // Clear everything except what we explicitly want to preserve during the clear operation
       localStorage.clear();

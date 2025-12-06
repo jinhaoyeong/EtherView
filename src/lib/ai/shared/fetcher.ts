@@ -13,6 +13,7 @@ type ProviderKey =
 interface ProviderConfig {
   maxRequestsPerMinute: number
   maxRequestsPerHour?: number
+  maxRequestsPerSecond?: number
   baseCooldownSeconds: number
   rateLimitCooldownSeconds: number
   errorMultiplier: number
@@ -26,6 +27,14 @@ interface ProviderStats {
   consecutiveErrors: number
   totalRequests: number
   successfulRequests: number
+}
+
+type DexPairShape = {
+  priceUsd?: number;
+  liquidity?: { usd?: number; locked?: boolean };
+  age?: { seconds?: number };
+  baseToken?: { address?: string };
+  quoteToken?: { address?: string };
 }
 
 const PROVIDER_CONFIGS: Record<ProviderKey, ProviderConfig> = {
@@ -105,8 +114,8 @@ const PROVIDER_CONFIGS: Record<ProviderKey, ProviderConfig> = {
   }
 }
 
-const cooldowns: Record<ProviderKey, number> = {}
-const stats: Record<ProviderKey, ProviderStats> = {} as any
+const cooldowns: Record<ProviderKey, number> = {} as Record<ProviderKey, number>
+const stats: Record<ProviderKey, ProviderStats> = {} as Record<ProviderKey, ProviderStats>
 
 // Initialize cooldowns and stats
 Object.keys(PROVIDER_CONFIGS).forEach(key => {
@@ -199,7 +208,7 @@ function canMakeRequest(provider: ProviderKey): boolean {
   updateRateLimitCounters(provider)
 
   // Check rate limits
-  const perSecondLimit = (provider as any) === 'etherscan' ? 5 : Infinity
+  const perSecondLimit = config.maxRequestsPerSecond ?? Infinity
   if (perSecondLimit !== Infinity && Date.now() - stat.lastRequestTime < 1000 / perSecondLimit) {
     return false
   }
@@ -258,9 +267,10 @@ async function fetchJSON(url: string, options: RequestInit & {
 
   try {
     res = await fetch(url, { ...options, headers, signal })
-  } catch (e: any) {
+  } catch (e: unknown) {
     if (provider && !skipCooldown) {
-      if (e.name === 'AbortError') {
+      const err = e as { name?: string }
+      if (err?.name === 'AbortError') {
         errorType = 'timeout'
       } else {
         errorType = 'network_error'
@@ -294,9 +304,9 @@ async function fetchJSON(url: string, options: RequestInit & {
 export async function fetchDexscreenerToken(address: string) {
   try {
     const data = await fetchJSON(`https://api.dexscreener.com/latest/dex/tokens/${address}`, { provider: 'dexscreener', timeoutMs: 6000 })
-    const pairs = Array.isArray(data?.pairs) ? data.pairs : []
+    const pairs: DexPairShape[] = Array.isArray(data?.pairs) ? (data.pairs as DexPairShape[]) : []
     if (pairs.length === 0) return null
-    const best = pairs.reduce((a: any, b: any) => (Number(a?.liquidity?.usd || 0) > Number(b?.liquidity?.usd || 0) ? a : b))
+    const best = pairs.reduce((a, b) => (Number(a?.liquidity?.usd || 0) > Number(b?.liquidity?.usd || 0) ? a : b))
     const price = Number(best?.priceUsd || 0)
     const liqUSD = Number(best?.liquidity?.usd || 0)
     const ageSeconds = Number(best?.age?.seconds || 0)
@@ -324,11 +334,11 @@ export async function fetchDexscreenerBatch(addresses: string[]) {
   try {
     const data = await fetchJSON(`https://api.dexscreener.com/latest/dex/tokens/${addresses.join(',')}`, { provider: 'dexscreener', timeoutMs: 8000 })
     const pairs = Array.isArray(data?.pairs) ? data.pairs : []
-    const result: Record<string, any> = {}
+    const result: Record<string, { usd: number; liquidityUSD: number; pairAgeDays: number; lpLocked: boolean; source: string; confidence: number }> = {}
 
     // Group pairs by token address and find best pair for each
-    const tokenPairs: Record<string, any[]> = {}
-    pairs.forEach((pair: any) => {
+    const tokenPairs: Record<string, DexPairShape[]> = {}
+    pairs.forEach((pair: DexPairShape) => {
       const baseToken = pair?.baseToken?.address?.toLowerCase()
       const quoteToken = pair?.quoteToken?.address?.toLowerCase()
 
@@ -345,7 +355,7 @@ export async function fetchDexscreenerBatch(addresses: string[]) {
     // Find best pair for each token
     Object.entries(tokenPairs).forEach(([address, tokenPairList]) => {
       if (tokenPairList.length > 0) {
-        const best = tokenPairList.reduce((a: any, b: any) =>
+        const best = tokenPairList.reduce((a, b) =>
           (Number(a?.liquidity?.usd || 0) > Number(b?.liquidity?.usd || 0) ? a : b)
         )
         const price = Number(best?.priceUsd || 0)
@@ -421,12 +431,13 @@ export async function fetchCryptoCompareSymbols(symbols: string[]) {
     const data = await fetchJSON(url, { provider: 'cryptocompare', timeoutMs: 6000, headers })
     const result: Record<string, { usd: number; source: string; confidence: number }> = {}
 
-    Object.entries(data).forEach(([symbol, prices]: [string, any]) => {
+    const entries = Object.entries(data as Record<string, { USD?: number }>)
+    for (const [symbol, prices] of entries) {
       const usd = prices?.USD
       if (typeof usd === 'number' && usd > 0) {
         result[symbol.toUpperCase()] = { usd, source: 'cryptocompare', confidence: 0.85 }
       }
-    })
+    }
 
     return result
   } catch {
@@ -461,12 +472,13 @@ export async function fetchCoinGeckoTokenBatch(addresses: string[]) {
     )
     const result: Record<string, { usd: number; source: string; confidence: number }> = {}
 
-    Object.entries(data).forEach(([address, priceData]: [string, any]) => {
+    const entries = Object.entries(data as Record<string, { usd?: number }>)
+    for (const [address, priceData] of entries) {
       const usd = priceData?.usd
       if (typeof usd === 'number' && usd > 0) {
         result[address.toLowerCase()] = { usd, source: 'coingecko', confidence: 0.8 }
       }
-    })
+    }
 
     return result
   } catch {
@@ -610,7 +622,7 @@ export function getProviderHealth(): Record<string, {
   avgResponseTime?: number;
   nextAvailable?: number;
 }> {
-  const health: Record<string, any> = {}
+  const health: Record<string, { status: 'healthy' | 'degraded' | 'critical'; successRate: number; avgResponseTime?: number; nextAvailable?: number }> = {}
 
   Object.entries(stats).forEach(([key, stat]) => {
     const successRate = stat.totalRequests > 0 ? stat.successfulRequests / stat.totalRequests : 1
@@ -625,7 +637,7 @@ export function getProviderHealth(): Record<string, {
     health[key] = {
       status,
       successRate,
-      nextAvailable: inCooldown(key as ProviderKey) ? cooldowns[key] : undefined
+      nextAvailable: inCooldown(key as ProviderKey) ? cooldowns[key as ProviderKey] : undefined
     }
   })
 

@@ -3,15 +3,50 @@
  * Advanced AI-driven sentiment analysis following CLAUDE.md specifications
  */
 
-import { newsAggregator, EnrichedNewsArticle } from './newsAggregator';
-import { sentimentAnalyzer, SentimentAnalysis } from './sentimentAnalyzer';
-import { predictionModel, MarketPrediction, AggregatedMarketSentiment } from './predictionModel';
-import { influencerWeighting, SocialSentimentSummary } from './influencerWeighting';
+import { realNewsAggregator, EnrichedNewsArticle } from './realNewsAggregator';
+import { SimpleSentimentAnalyzer, SentimentAnalysis } from './simpleSentimentAnalyzer';
+import { RealSentimentAnalyzer } from './realSentimentAnalyzer';
+import { realPredictiveModel, MarketPrediction } from './predictiveModel';
+import { realSocialAggregator, SocialSentimentSummary } from './realSocialAggregator';
+import { AggregatedMarketSentiment } from './types';
 import { aiCache, CacheKeys } from '../shared/cache';
+import { apiClient, newsAPI } from '../shared/api';
+import { performanceManager } from './performanceManager';
 
 export interface EnhancedSentimentArticle extends EnrichedNewsArticle {
   sentiment: SentimentAnalysis;
   duplicateGroup?: string;
+}
+
+// Base market summary used for UI and aggregation
+export interface MarketSummary {
+  aggregatedIndex: number;
+  label: 'Bullish' | 'Neutral' | 'Bearish';
+  confidence: number;
+  topInfluencers: Array<{ handle: string; weight: number; sentiment: string }>;
+  topEntities: Array<{ entity: string; influenceScore: number; recentMentions?: number }>;
+  trendIndicator: 'rising' | 'falling' | 'stable';
+}
+
+// Lightweight article shape for internal processing
+export interface NewsArticle {
+  id: string;
+  title: string;
+  source: string;
+  url: string;
+  publishedAt: string;
+  summary?: string;
+  content?: string;
+  author?: string;
+}
+
+export interface SentimentArticle extends NewsArticle {
+  sentimentScore: number;
+  confidence?: number;
+  entities?: string[];
+  category?: 'macro' | 'geopolitical' | 'regulation' | 'tech' | 'social' | 'market';
+  sentimentLabel?: 'Bullish' | 'Neutral' | 'Bearish';
+  impactEstimate?: { asset: string; probableDirection: string; confidence: number };
 }
 
 export interface ComprehensiveMarketSummary extends MarketSummary {
@@ -56,7 +91,7 @@ export interface SentimentAnalysisResult {
 }
 
 export class SentimentAnalysisEngine {
-  private readonly SOURCE_WEIGHTS = {
+  private readonly SOURCE_WEIGHTS: Record<string, number> = {
     'wsj.com': 0.95,
     'ft.com': 0.95,
     'bloomberg.com': 0.95,
@@ -74,84 +109,110 @@ export class SentimentAnalysisEngine {
     const startTime = performance.now();
     console.log(`🧠 Starting comprehensive sentiment analysis${forceRefresh ? ' (forced refresh)' : ' (using cache if available)'}${fast ? ' [fast]' : ''}`);
 
-    try {
-      // Step 1: Aggregate news from multiple sources with deduplication
-      console.log('📰 Step 1: Aggregating news from multiple sources...');
-      const enrichedArticles = await newsAggregator.aggregateNews(forceRefresh, fast);
+    const cacheKey = CacheKeys.SENTIMENT_ANALYSIS(fast ? 'fast' : 'comprehensive');
 
-      if (enrichedArticles.length === 0) {
-        console.warn('⚠️ No articles found for analysis');
-        return this.createEmptyResult(startTime, forceRefresh);
-      }
+    return await performanceManager.executeWithCaching(
+      `sentiment_analysis_${cacheKey}`,
+      async () => {
+        try {
+          // Step 1: Aggregate news from multiple real sources with deduplication
+          console.log('📰 Step 1: Aggregating news from real sources...');
+          const enrichedArticles = await realNewsAggregator.aggregateNews(forceRefresh, fast);
 
-      console.log(`📰 Retrieved ${enrichedArticles.length} unique articles`);
+          if (enrichedArticles.length === 0) {
+            console.warn('⚠️ No articles found for analysis');
+            return this.createEmptyResult(startTime, forceRefresh);
+          }
 
-      const limitedArticles = fast ? enrichedArticles.slice(0, 30) : enrichedArticles;
+          console.log(`📰 Retrieved ${enrichedArticles.length} unique articles`);
+          // Cost saver ON: analyze 3 articles; OFF: analyze up to 10 articles
+          const limitedArticles = fast
+            ? enrichedArticles.slice(0, 3)
+            : enrichedArticles.slice(0, Math.min(10, enrichedArticles.length));
 
-      // Step 2: Analyze sentiment for each article using advanced NLP
-      console.log('🧠 Step 2: Performing sentiment analysis on articles...');
-      const sentimentAnalyses = limitedArticles.map(article =>
-        sentimentAnalyzer.analyzeSentiment(article)
-      );
+          console.log(`🧠 Analyzing sentiment for ${limitedArticles.length} articles (${fast ? 'cost saver 3' : 'up to 10'} articles)`);
 
-      // Step 3: Combine articles with sentiment analysis
-      const analyzedArticles: EnhancedSentimentArticle[] = limitedArticles.map((article, index) => ({
-        ...article,
-        sentiment: sentimentAnalyses[index]
-      }));
+          // Step 2: Parallel processing of sentiment analysis and social signals
+          console.log('🧠 Step 2: Performing AI sentiment analysis on articles...');
+          const sentimentAnalysesPromise = (async () => {
+            // Always use real AI analyzer; fast mode reduces count and tokens
+            return performanceManager.executeBatch(
+              limitedArticles,
+              (article) => new RealSentimentAnalyzer().analyzeSentiment(article, { mode: fast ? 'fast' : 'normal' }),
+              {
+                batchSize: fast ? 3 : 5,
+                concurrency: 2,
+                delayBetweenBatches: fast ? 500 : 1000,
+                cacheKey: (article) => `sentiment_glm_${article.id}_${fast ? 'fast' : 'normal'}`,
+                cacheTTL: 30 * 60 * 1000
+              }
+            );
+          })();
+          const [sentimentAnalyses, socialSignals] = await Promise.all([
+            sentimentAnalysesPromise,
+            performanceManager.executeWithCaching(
+              `social_signals_${Date.now()}`,
+              () => realSocialAggregator.analyzeInfluencerSignals(enrichedArticles, []),
+              20 * 60 * 1000, // 20 minutes for social signals
+              forceRefresh
+            )
+          ]);
 
-      // Step 4: Analyze social signals and influencer sentiment
-      console.log('👥 Step 3: Analyzing social signals and influencer sentiment...');
-      const socialSignals = await influencerWeighting.analyzeInfluencerSignals(
-        enrichedArticles,
-        sentimentAnalyses
-      );
+          // Step 3: Combine articles with sentiment analysis
+          const analyzedArticles: EnhancedSentimentArticle[] = limitedArticles.map((article, index) => ({
+            ...article,
+            sentiment: sentimentAnalyses[index]
+          }));
 
-      // Step 5: Generate comprehensive market prediction
-      console.log('🔮 Step 4: Generating market predictions using weighted analysis...');
-      const prediction = predictionModel.generateMarketPrediction(
-        analyzedArticles.map(a => ({ article: a, sentiment: a.sentiment }))
-      );
+          // Step 4: Generate comprehensive market prediction using ML
+          console.log('🔮 Step 3: Generating market predictions using ML and AI...');
+          const prediction = await performanceManager.executeWithCaching(
+            `market_prediction_${Date.now()}`,
+            () => realPredictiveModel.generateMarketPrediction(
+              analyzedArticles.map(a => ({ article: a, sentiment: a.sentiment }))
+            ),
+            15 * 60 * 1000, // 15 minutes for predictions
+            forceRefresh
+          );
 
-      // Step 6: Create comprehensive market summary
-      console.log('📊 Step 5: Creating comprehensive market summary...');
-      const marketSummary = this.createComprehensiveMarketSummary(
-        analyzedArticles,
-        prediction,
-        socialSignals
-      );
+          // Step 5: Create comprehensive market summary
+          console.log('📊 Step 4: Creating comprehensive market summary...');
+          const marketSummary = this.createComprehensiveMarketSummary(
+            analyzedArticles,
+            prediction,
+            socialSignals
+          );
 
-      // Step 7: Generate evidence and reasoning
-      console.log('🔍 Step 6: Generating evidence and reasoning...');
-      const sourceCoverage = this.calculateSourceCoverage(analyzedArticles);
+          // Step 6: Generate evidence and reasoning
+          console.log('🔍 Step 5: Generating evidence and reasoning...');
+          const sourceCoverage = this.calculateSourceCoverage(analyzedArticles);
 
-      const processingTime = performance.now() - startTime;
-      console.log(`✅ Comprehensive analysis complete in ${processingTime.toFixed(0)}ms`);
+          const processingTime = performance.now() - startTime;
+          console.log(`✅ Comprehensive analysis complete in ${processingTime.toFixed(0)}ms`);
 
-      const result: SentimentAnalysisResult = {
-        marketSummary,
-        articles: analyzedArticles,
-        lastUpdated: new Date().toISOString(),
-        sourceCoverage,
-        metadata: {
-          totalSources: new Set(analyzedArticles.map(a => a.source)).size,
-          averageConfidence: sentimentAnalyses.reduce((sum, s) => sum + s.confidence, 0) / sentimentAnalyses.length,
-          processingTime,
-          cacheStatus: forceRefresh ? 'fresh' : 'cached'
+          const result: SentimentAnalysisResult = {
+            marketSummary,
+            articles: analyzedArticles,
+            lastUpdated: new Date().toISOString(),
+            sourceCoverage,
+            metadata: {
+              totalSources: new Set(analyzedArticles.map(a => a.source)).size,
+              averageConfidence: sentimentAnalyses.reduce((sum, s) => sum + s.confidence, 0) / sentimentAnalyses.length,
+              processingTime,
+              cacheStatus: forceRefresh ? 'fresh' : 'cached'
+            }
+          };
+
+          return result;
+
+        } catch (error) {
+          console.error('❌ Comprehensive sentiment analysis failed:', error);
+          return this.createEmptyResult(startTime, forceRefresh);
         }
-      };
-
-      if (forceRefresh) {
-        const cacheKey = CacheKeys.SENTIMENT_ANALYSIS(fast ? 'fast' : 'comprehensive');
-        aiCache.set(cacheKey, result, 15 * 60 * 1000);
-      }
-
-      return result;
-
-    } catch (error) {
-      console.error('❌ Comprehensive sentiment analysis failed:', error);
-      return this.createEmptyResult(startTime, forceRefresh);
-    }
+      },
+      10 * 60 * 1000, // 10 minutes cache for full analysis
+      forceRefresh
+    );
   }
 
   private createEmptyResult(startTime: number, forceRefresh: boolean): SentimentAnalysisResult {
@@ -179,11 +240,6 @@ export class SentimentAnalysisEngine {
       topInfluencers: [],
       topEntities: [],
       trendIndicator: 'stable',
-      prediction: {
-        shortTerm: 'neutral',
-        confidence: 0,
-        reasoning: 'Insufficient data available for analysis'
-      },
       aggregatedSentiment: {
         overallIndex: 0,
         label: 'Neutral',
@@ -240,7 +296,7 @@ export class SentimentAnalysisEngine {
 
     return {
       ...baseSummary,
-      aggregatedSentiment: prediction.predictionMarketData || this.createDefaultAggregatedSentiment(),
+      aggregatedSentiment: this.calculateDefaultAggregatedSentiment(),
       prediction,
       socialSignals,
       detailedAnalysis,
@@ -399,7 +455,7 @@ export class SentimentAnalysisEngine {
 
     try {
       // Fetch from NewsAPI - crypto/blockchain related news
-      const newsResponse = await newsAPI.getCryptoNews();
+      const newsResponse = await newsAPI.getCryptoNews() as import('../shared/api').APIResponse<{ articles: Array<{ title?: string; source?: { name?: string }; url?: string; publishedAt?: string; description?: string; content?: string }> }>;
 
       if (!newsResponse.success || !newsResponse.data?.articles) {
         console.warn('⚠️ NewsAPI failed, falling back to alternative sources');
@@ -407,15 +463,15 @@ export class SentimentAnalysisEngine {
       }
 
       const articles: NewsArticle[] = newsResponse.data.articles
-        .slice(0, 50) // Increase to 50 most recent articles
-        .map((article: any, index: number) => ({
+        .slice(0, 50)
+        .map((article: { title?: string; source?: { name?: string }; url?: string; publishedAt?: string; description?: string; content?: string }, index: number) => ({
           id: `news_${Date.now()}_${index}`,
-          title: article.title,
+          title: article.title || 'Untitled',
           source: article.source?.name || 'Unknown',
-          url: article.url,
-          publishedAt: article.publishedAt,
-          summary: article.description,
-          content: article.content
+          url: article.url || '#',
+          publishedAt: article.publishedAt || new Date().toISOString(),
+          summary: article.description || '',
+          content: article.content || undefined
         }))
         .filter(article => {
           // Filter for relevant crypto/finance content
@@ -487,7 +543,7 @@ export class SentimentAnalysisEngine {
           continue;
         }
 
-        const response = await apiClient.fetch(source.url, {
+        const response = await apiClient.fetch<unknown>(source.url, {
           cacheKey: `fallback:${source.key}`,
           cacheTTL: 10 * 60 * 1000 // 10 minutes
         });
@@ -495,36 +551,39 @@ export class SentimentAnalysisEngine {
         if (response.success) {
           let articles: NewsArticle[] = [];
 
-          // Handle different response formats
-          if (source.key === 'cryptopanic' && response.data?.results) {
-            articles = response.data.results.slice(0, source.limit).map((item: any, index: number) => ({
+          const data = response.data as { results?: Array<unknown>; articles?: Array<unknown> } | undefined;
+          if (source.key === 'cryptopanic' && Array.isArray(data?.results)) {
+            const items = (data?.results || []) as Array<{ title?: string; url?: string; published_at?: string }>;
+            articles = items.slice(0, source.limit).map((item, index: number) => ({
               id: `${source.key}_${Date.now()}_${index}`,
-              title: item.title,
+              title: item.title || 'Untitled',
               source: source.name,
-              url: item.url,
+              url: item.url || '#',
               publishedAt: item.published_at || new Date().toISOString(),
-              summary: item.title,
-              content: null
+              summary: item.title || '',
+              content: undefined
             }));
-          } else if ((source.key === 'newsdata' || source.key === 'currents') && response.data?.results) {
-            articles = response.data.results.slice(0, source.limit).map((item: any, index: number) => ({
+          } else if ((source.key === 'newsdata' || source.key === 'currents') && Array.isArray(data?.results)) {
+            const items = (data?.results || []) as Array<{ title?: string; title_en?: string; url?: string; link?: string; pubDate?: string; published_at?: string; description?: string }>;
+            articles = items.slice(0, source.limit).map((item, index: number) => ({
               id: `${source.key}_${Date.now()}_${index}`,
-              title: item.title || item.title_en,
+              title: item.title || item.title_en || 'Untitled',
               source: source.name,
-              url: item.url || item.link,
+              url: item.url || item.link || '#',
               publishedAt: item.pubDate || item.published_at || new Date().toISOString(),
-              summary: item.description || item.title || item.title_en,
-              content: null
+              summary: item.description || item.title || item.title_en || '',
+              content: undefined
             }));
-          } else if (response.data?.articles) {
-            articles = response.data.articles.slice(0, source.limit).map((item: any, index: number) => ({
+          } else if (Array.isArray(data?.articles)) {
+            const items = (data?.articles || []) as Array<{ title?: string; source?: { name?: string }; url?: string; publishedAt?: string; description?: string }>;
+            articles = items.slice(0, source.limit).map((item, index: number) => ({
               id: `${source.key}_${Date.now()}_${index}`,
-              title: item.title,
+              title: item.title || 'Untitled',
               source: item.source?.name || source.name,
-              url: item.url,
+              url: item.url || '#',
               publishedAt: item.publishedAt || new Date().toISOString(),
-              summary: item.description,
-              content: null
+              summary: item.description || '',
+              content: undefined
             }));
           }
 
@@ -613,8 +672,8 @@ export class SentimentAnalysisEngine {
       sentimentLabel,
       entities,
       confidence: 0.8, // Mock confidence
-      impactEstimate,
-      category
+      category,
+      impactEstimate
     };
   }
 
@@ -729,7 +788,7 @@ export class SentimentAnalysisEngine {
     }
   }
 
-  private async generateMarketSummary(articles: SentimentArticle[]): Promise<MarketSummary> {
+  private generateMarketSummary(articles: EnhancedSentimentArticle[]): MarketSummary {
     // Calculate weighted sentiment index
     let weightedSum = 0;
     let totalWeight = 0;
@@ -737,9 +796,9 @@ export class SentimentAnalysisEngine {
     for (const article of articles) {
       const weight = this.SOURCE_WEIGHTS[this.extractDomain(article.url)] || 0.5;
       const recencyWeight = this.calculateRecencyWeight(article.publishedAt);
-      const finalWeight = weight * recencyWeight * (1 + (article.entities?.length || 0) * 0.1);
+      const finalWeight = weight * recencyWeight * (1 + (article.entityCount || 0) * 0.1);
 
-      weightedSum += article.sentimentScore * finalWeight;
+      weightedSum += article.sentiment.score * finalWeight;
       totalWeight += finalWeight;
     }
 
@@ -764,9 +823,6 @@ export class SentimentAnalysisEngine {
         recentMentions: count
       }));
 
-    // Generate prediction
-    const prediction = this.generateMarketPrediction(articles, aggregatedIndex);
-
     return {
       aggregatedIndex,
       label,
@@ -774,7 +830,6 @@ export class SentimentAnalysisEngine {
       topInfluencers,
       topEntities,
       trendIndicator: aggregatedIndex > 0.1 ? 'rising' : aggregatedIndex < -0.1 ? 'falling' : 'stable',
-      prediction
     };
   }
 
@@ -783,53 +838,21 @@ export class SentimentAnalysisEngine {
     return Math.exp(-Math.log(2) * ageHours / this.RECENCY_HALF_LIFE_HOURS);
   }
 
-  private countEntities(articles: SentimentArticle[]): Record<string, number> {
+  private countEntities(articles: EnhancedSentimentArticle[]): Record<string, number> {
     const counts: Record<string, number> = {};
 
     for (const article of articles) {
-      if (article.entities && Array.isArray(article.entities)) {
-        for (const entity of article.entities) {
-          counts[entity] = (counts[entity] || 0) + 1;
-        }
+      const entities = this.extractEntities(article.title + ' ' + (article.summary || ''));
+      for (const entity of entities) {
+        counts[entity] = (counts[entity] || 0) + 1;
       }
     }
 
     return counts;
   }
 
-  private generateMarketPrediction(articles: SentimentArticle[], currentSentiment: number) {
-    // Simple prediction logic based on sentiment trends
-    const recentArticles = articles.filter(a =>
-      (Date.now() - new Date(a.publishedAt).getTime()) < 6 * 60 * 60 * 1000 // Last 6 hours
-    );
 
-    const avgSentiment = recentArticles.length > 0
-      ? recentArticles.reduce((sum, a) => sum + a.sentimentScore, 0) / recentArticles.length
-      : currentSentiment;
-
-    let shortTerm: 'bullish' | 'neutral' | 'bearish';
-    let reasoning: string;
-
-    if (avgSentiment > 0.2) {
-      shortTerm = 'bullish';
-      reasoning = 'Positive news flow and regulatory developments suggest upward momentum';
-    } else if (avgSentiment < -0.2) {
-      shortTerm = 'bearish';
-      reasoning = 'Regulatory concerns and market uncertainty indicate potential downside';
-    } else {
-      shortTerm = 'neutral';
-      reasoning = 'Mixed signals suggest sideways trading in the short term';
-    }
-
-    return {
-      shortTerm,
-      confidence: Math.min(0.8, Math.abs(avgSentiment) + 0.3),
-      reasoning,
-      timeframe: '24-48 hours'
-    };
-  }
-
-  private calculateSourceCoverage(articles: SentimentArticle[]): Record<string, number> {
+  private calculateSourceCoverage(articles: EnhancedSentimentArticle[]): Record<string, number> {
     const coverage: Record<string, number> = {};
 
     for (const article of articles) {
@@ -840,23 +863,7 @@ export class SentimentAnalysisEngine {
     return coverage;
   }
 
-  /**
-   * Create default aggregated sentiment data when prediction model fails
-   */
-  private createDefaultAggregatedSentiment(): AggregatedMarketSentiment {
-    return {
-      overallScore: 0.5,
-      confidence: 0.5,
-      bullishCount: 0,
-      bearishCount: 0,
-      neutralCount: 1,
-      totalAnalyzed: 1,
-      averageImpactScore: 0.5,
-      topPositiveFactors: [],
-      topNegativeFactors: [],
-      keyEntities: []
-    };
-  }
+  // Removed legacy createDefaultAggregatedSentiment in favor of calculateDefaultAggregatedSentiment
 }
 
 export const sentimentAnalysisEngine = new SentimentAnalysisEngine();

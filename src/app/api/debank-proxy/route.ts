@@ -31,7 +31,7 @@ export async function GET(request: NextRequest) {
           'User-Agent': 'EtherView/1.0'
         },
         // Debank can be slow; keep a reasonable timeout
-        signal: AbortSignal.timeout(10000)
+        signal: AbortSignal.timeout(15000)
       })
       if (!res.ok) {
         continue

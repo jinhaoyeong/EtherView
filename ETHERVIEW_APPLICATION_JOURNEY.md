@@ -1702,3 +1702,74 @@ etherview/
 **Session Focus**: High-density Scam Alert UI, larger pagination, reliable status, deploy hardening
 
 ---
+
+## 🔧 Portfolio Overview Completeness & Reliability Fix
+
+### Session Date
+- December 3, 2025
+
+### Symptoms
+- Overview showed only a single token (ETH) or a very small subset despite the wallet holding hundreds of tokens.
+- Console showed errors like `❌ MULTICALL: All providers failed for chunk of ... tokens`.
+- Intermittent upstream failures (e.g., DeBank timing out) caused incomplete aggregation.
+
+### Root Causes
+- Etherscan `tokentx` pages were cached under the same key, so later pages reused page 1 results and truncated contract discovery (`src/app/api/etherscan-proxy/route.ts:34`).
+- The overview raced a fast path against full aggregation; if full aggregation didn’t finish quickly, it returned the fast set (often only ETH) (`src/lib/api/wallet.ts:1415–1425`).
+- Browser-based multicall to public RPCs hit CORS and revert behavior; a single bad token call could break whole batches.
+- DeBank API intermittency in the environment exacerbated missing tokens when relied on too heavily.
+- DeBank was intermittently failing in your environment, and the previous design depended on it too heavily. When DeBank timed out or your network blocked it, discovery returned only ETH or a tiny “fast” set.
+
+### Changes Implemented
+- Etherscan proxy reliability:
+  - Added 15s timeout and retries, ensured V2 handling for `tokentx` (`src/app/api/etherscan-proxy/route.ts:12, 57–71, 83–88`).
+  - Fixed cache key to include pagination/sort parameters (`src/app/api/etherscan-proxy/route.ts:34`).
+  - Increased discovery depth to up to 15 pages, longer client timeouts (`src/lib/api/wallet.ts:1109–1125`).
+- Aggregation behavior:
+  - Removed early “race-and-fallback” so the app waits for full multi-source aggregation before rendering (`src/lib/api/wallet.ts:1415–1425`).
+- Multicall resiliency:
+  - Introduced local RPC proxy (`/api/rpc-proxy`) to bypass CORS and network blockers (`src/app/api/rpc-proxy/route.ts:1`).
+  - Switched to `tryAggregate(requireSuccess=false)` so one failing token doesn’t break the batch (`src/lib/eth/multicall.ts:7, 24–26, 44–61`).
+  - Added sequential per‑token `balanceOf` fallback if a batch fails (`src/lib/eth/multicall.ts:70–88`).
+- Broader discovery:
+  - Added Ethplorer proxy as another source for address token lists and merged into overview (`src/app/api/ethplorer-proxy/route.ts:1`, `src/lib/api/wallet.ts:1208–1266, 1313–1318`).
+- UI sorting:
+  - Tokens sorted by `valueUSD` descending for a portfolio‑like view (`src/components/features/portfolio/enhanced-overview.tsx:262–264`).
+
+### Current Fetch Pipeline (Now)
+- Discovery (contracts and candidates):
+  - Primary: Etherscan V2 `account/tokentx` across many pages (`src/lib/api/wallet.ts:1109–1125`).
+  - Primary supplement: Ethplorer address tokens (`src/lib/api/wallet.ts:1208–1266`).
+  - Secondary: DeBank, Zapper, Covalent in parallel (`src/lib/api/wallet.ts:1313–1318`, `1431–1465`).
+- Balances:
+  - Primary: Multicall via `/api/rpc-proxy` using `tryAggregate` (`src/lib/eth/multicall.ts:7, 24–26, 44–61`).
+  - Fallback: Sequential `balanceOf` via `/api/rpc-proxy` (`src/lib/eth/multicall.ts:70–88`).
+- Pricing:
+  - Primary: Address‑based price cache (CoinGecko‑first) with fallbacks (inside `priceCache.ts`).
+  - ETH price via `price-proxy` when needed by fast views.
+- Merge, normalize, sort:
+  - Dedup by address/symbol, prefer records with price/value, fill missing prices by address, sort by `valueUSD` descending (`src/lib/api/wallet.ts:1294–1410`, `enhanced-overview.tsx:262–264`).
+
+### Before vs Now
+- Before: Fast path often won the race → partial tokens; Etherscan pages reused cache → truncated contracts; browser multicall failed due to CORS; DeBank reliance magnified incompleteness.
+- Now: Full aggregation awaited; unique cache per Etherscan page; multicall runs through local proxy with per‑call success; sequential fallback ensures balances even when batches fail; Ethplorer fills long‑tail tokens.
+
+### Troubleshooting & Health Checks
+- Etherscan proxy: `GET /api/etherscan-proxy?chainid=1&module=account&action=tokentx&address=<WALLET>&page=1&offset=200&sort=desc`.
+- Ethplorer proxy: `GET /api/ethplorer-proxy?addr=<WALLET>`.
+- DeBank proxy: `GET /api/debank-proxy?addr=<WALLET>`.
+- Zapper proxy: `GET /api/zapper-proxy?addr=<WALLET>&network=ethereum`.
+- Covalent proxy: `GET /api/covalent-proxy?chainid=1&addr=<WALLET>`.
+- RPC proxy (JSON‑RPC POST): `POST /api/rpc-proxy` with `eth_call` payload.
+
+### Impact
+- Overview now tracks DeBank closely for breadth while preserving correctness on balances and pricing.
+- Network issues or one provider’s downtime no longer collapse the token list; aggregation remains complete using remaining sources and robust balance fetching.
+
+### Notes
+- External providers may rate‑limit; fetchers and proxies use backoff, cache, and retries.
+- For production deployments, configure `NEXT_PUBLIC_SITE_URL` and provider keys where available to maximize reliability.
+
+**Document Version**: 2.6
+**Last Updated**: December 3, 2025
+**Session Focus**: Portfolio overview completeness, multi‑source redundancy, resilient balance fetching

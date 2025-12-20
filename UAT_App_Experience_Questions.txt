@@ -1,0 +1,99 @@
+User Acceptance Testing (UAT) Questions - App Experience Feedback
+
+==================================
+INSTRUCTIONS FOR GOOGLE FORM:
+==================================
+1. Go to forms.google.com
+2. Create a new form
+3. Copy and paste the questions below
+4. Set appropriate question types (multiple choice, linear scale, checkbox, paragraph)
+5. Enable required questions where marked
+6. Set up email collection if needed
+
+==================================
+QUESTIONS TO COPY:
+==================================
+
+1. [Required] On a scale of 1-5, how would you rate your overall experience using the app?
+   - Question Type: Linear Scale (1 = Very Poor, 5 = Excellent)
+   - Options: 1, 2, 3, 4, 5
+
+2. [Required] How intuitive was the app's user interface?
+   - Question Type: Multiple Choice
+   - Options:
+     ○ Very intuitive - I could navigate easily without help
+     ○ Mostly intuitive - I figured it out quickly
+     ○ Somewhat confusing - I needed some trial and error
+     ○ Very confusing - I struggled to use basic features
+
+3. [Required] What features did you find most useful? (Select all that apply)
+   - Question Type: Checkboxes
+   - Options:
+     □ Dashboard/Overview
+     □ Data Visualization
+     □ Search/Filter functionality
+     □ Real-time updates
+     □ Export capabilities
+     □ Settings/Customization
+     □ Performance metrics
+     □ Other (please specify)
+
+4. Did you encounter any bugs or issues while using the app? (Select all that apply)
+   - Question Type: Checkboxes
+   - Options:
+     □ No issues encountered
+     □ App crashed or froze
+     □ Features not working as expected
+     □ Slow performance/lagging
+     □ Data not loading correctly
+     □ UI/Display issues
+     □ Other (please describe)
+
+5. [Required] How would you rate the app's performance and speed?
+   - Question Type: Linear Scale (1 = Very Slow, 5 = Very Fast)
+   - Options: 1, 2, 3, 4, 5
+
+6. [Required] Were you able to complete your intended tasks successfully?
+   - Question Type: Multiple Choice
+   - Options:
+     ○ Yes, completed all tasks easily
+     ○ Yes, completed with some difficulty
+     ○ Partially completed some tasks
+     ○ No, couldn't complete tasks
+
+7. What features do you think are missing or could be improved?
+   - Question Type: Paragraph
+   - Placeholder: "Please describe any features you'd like to see or improvements that could be made..."
+
+8. [Required] How likely are you to recommend this app to others?
+   - Question Type: Linear Scale (1 = Very Unlikely, 5 = Very Likely)
+   - Options: 1, 2, 3, 4, 5
+
+9. Which aspect of the app impressed you the most?
+   - Question Type: Multiple Choice
+   - Options:
+     ○ User Interface Design
+     ○ Ease of Use
+     ◡ Performance Speed
+     ○ Feature Set
+     ○ Data Visualization
+     ○ Other (please specify)
+
+10. [Required] Any additional comments or suggestions to improve the app?
+    - Question Type: Paragraph
+    - Placeholder: "Please share any other feedback about your experience..."
+
+==================================
+ADDITIONAL FORM SETTINGS:
+==================================
+
+Form Title: User Acceptance Testing - EtherView App Feedback
+Form Description: "Thank you for testing EtherView! Your feedback will help us improve the app experience. This survey should take approximately 5-10 minutes to complete."
+
+Confirmation Message: "Thank you for completing our survey! Your feedback is valuable and will help us enhance EtherView."
+
+Optional Questions to Consider Adding:
+- What is your role? (Developer, Analyst, Manager, etc.)
+- How frequently do you plan to use this app? (Daily, Weekly, Monthly, Rarely)
+- What device/browser did you use for testing?
+- Would you like to be contacted for follow-up questions? (Yes/No with email field)

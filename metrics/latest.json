@@ -1,0 +1,58 @@
+{
+  "counters": {
+    "price_proxy_requests": 29,
+    "price_proxy_success": 29,
+    "etherscan_proxy_requests": 1,
+    "etherscan_balance_requests": 1,
+    "etherscan_proxy_success": 1,
+    "metrics_event_errors": 2,
+    "transactions_fetch_requests": 4,
+    "transactions_returned_count": 0,
+    "scam_analyzed_total": 20,
+    "scam_flags_high": 5,
+    "scam_flags_medium": 2,
+    "scam_flags_low": 13,
+    "analysis_tokens_total": 250,
+    "analysis_tokens_no_price": 250,
+    "analysis_transactions_total": 0
+  },
+  "gauges": {
+    "price_proxy_coverage": 0,
+    "price_proxy_cache_hit_rate": 0,
+    "token_price_coverage": 0,
+    "verified_contract_rate": 0.04
+  },
+  "histograms": {
+    "price_proxy_latency_ms": {
+      "count": 29,
+      "avg": 180.75862068965517,
+      "p50": 2,
+      "p90": 372
+    },
+    "etherscan_proxy_latency_ms": {
+      "count": 1,
+      "avg": 2460,
+      "p50": 2460,
+      "p90": 2460
+    },
+    "transactions_fetch_latency_ms": {
+      "count": 4,
+      "avg": 193.61965000000419,
+      "p50": 1.184000000008382,
+      "p90": 1.3260000000009313
+    },
+    "scam_score": {
+      "count": 20,
+      "avg": 44.8,
+      "p50": 25,
+      "p90": 91
+    },
+    "analysis_total_time_ms": {
+      "count": 1,
+      "avg": 19551,
+      "p50": 19551,
+      "p90": 19551
+    }
+  },
+  "timestamp": 1764571686708
+}

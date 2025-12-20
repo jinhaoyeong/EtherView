@@ -1,0 +1,74 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+ 
+# Windows reserved device file accidentally created
+nul
+
+/.claude/
+/.figma/
+/.serena/
+/.trae/
+/docs/
+/EtherView Documentation (Must Follow)/
+/5-article-cost-summary.js
+/CLAUDE_IMPLEMENTATION_VERIFICATION.md
+/CLAUDE.md
+/ETHERVIEW_APPLICATION_JOURNEY.md
+/metricsguide.txt
+/ScamDetectionGuide.txt
+
+/.claude/
+/.figma/
+/.serena/
+/.trae/
+/docs/
+/EtherView Documentation (Must Follow)/
+/5-article-cost-summary.js
+/CLAUDE_IMPLEMENTATION_VERIFICATION.md
+/CLAUDE.md
+/ETHERVIEW_APPLICATION_JOURNEY.md
+/metricsguide.txt
+/ScamDetectionGuide.txt
+/UAT_App_Experience_Question.txt
+/Sample_UAT_Responses.txt
+/etherview.md
+/chapter5_example.md

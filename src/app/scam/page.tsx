@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo, memo, useTransition } from "react";
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -72,6 +72,18 @@ export default function ScamTokenAlertPage() {
   const { t } = useTranslation();
   const { settings } = useSettings();
   const [flaggedTokens, setFlaggedTokens] = useState<FlaggedToken[]>([]);
+  const [groupedTokens, setGroupedTokens] = useState<{
+    all: FlaggedToken[];
+    high: FlaggedToken[];
+    medium: FlaggedToken[];
+    low: FlaggedToken[];
+  }>({
+    all: [],
+    high: [],
+    medium: [],
+    low: [],
+  });
+  const [isPending, startTransition] = useTransition();
   const [stats, setStats] = useState({
     highRiskCount: 0,
     mediumRiskCount: 0,
@@ -86,7 +98,8 @@ export default function ScamTokenAlertPage() {
   const [sortOrder, setSortOrder] = useState<"desc" | "asc">("desc");
   const [viewMode, setViewMode] = useState<"list" | "grid">("list");
   const [currentPage, setCurrentPage] = useState(1);
-  const itemsPerPage = settings?.display.isCustomItemsPerPage ? settings.display.itemsPerPage : 100;
+  const itemsPerPage = 25;
+  const [visibleCount, setVisibleCount] = useState(itemsPerPage);
 
   useEffect(() => {
     if (walletAddress && walletAddress.trim() !== '') {
@@ -97,10 +110,12 @@ export default function ScamTokenAlertPage() {
     }
   }, [walletAddress]);
 
-  // Reset page when filters change
+  // Reset page when filters change - REMOVED useEffect as it's now handled in event handlers
+  /*
   useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm, riskFilter, sortOrder, itemsPerPage]);
+  */
 
   const loadScamData = async (address: string, forceRefresh: boolean = false) => {
     try {
@@ -149,24 +164,38 @@ export default function ScamTokenAlertPage() {
       const tokens: FlaggedToken[] = Array.isArray(scam.flaggedTokens) ? scam.flaggedTokens as FlaggedToken[] : [];
 
       // Robust dedup: prefer tokenAddress, fallback to symbol
-      const uniqueTokens = tokens.filter((token, index, arr) => {
+      const seen = new Set();
+      const uniqueTokens = tokens.filter(token => {
         const key = (token.tokenAddress || '').toLowerCase() || (token.symbol || '').toLowerCase();
-        return arr.findIndex(t => {
-          const otherKey = (t.tokenAddress || '').toLowerCase() || (t.symbol || '').toLowerCase();
-          return otherKey === key;
-        }) === index;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
       });
 
       if (tokens.length !== uniqueTokens.length) {
         console.log(`⚠️ Removed ${tokens.length - uniqueTokens.length} duplicate tokens from scam results`);
       }
 
-      setFlaggedTokens(uniqueTokens);
+      // Sort once by score (high to low) and pre-group by risk level
+      const sortedTokens = [...uniqueTokens].sort((a, b) => b.score - a.score);
+      const highTokens = sortedTokens.filter(
+        (t) => t.riskLevel === "high" || t.riskLevel === "critical"
+      );
+      const mediumTokens = sortedTokens.filter((t) => t.riskLevel === "medium");
+      const lowTokens = sortedTokens.filter((t) => t.riskLevel === "low");
+
+      setFlaggedTokens(sortedTokens);
+      setGroupedTokens({
+        all: sortedTokens,
+        high: highTokens,
+        medium: mediumTokens,
+        low: lowTokens,
+      });
       setStats({
-        highRiskCount: scam.highRiskCount || 0,
-        mediumRiskCount: scam.mediumRiskCount || 0,
-        lowRiskCount: scam.lowRiskCount || 0,
-        totalTokens: scam.totalTokens || tokens.length,
+        highRiskCount: scam.highRiskCount || highTokens.length,
+        mediumRiskCount: scam.mediumRiskCount || mediumTokens.length,
+        lowRiskCount: scam.lowRiskCount || lowTokens.length,
+        totalTokens: scam.totalTokens || sortedTokens.length,
       });
       const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
       const duration = Math.round((t1 - t0));
@@ -199,31 +228,99 @@ export default function ScamTokenAlertPage() {
   const handleRefresh = async () => {
     if (!walletAddress) return;
     setRefreshing(true);
-    await loadScamData(walletAddress);
+    await loadScamData(walletAddress, true);
     setRefreshing(false);
   };
 
-  // 60s default for scam detection
-  useAutoRefresh(handleRefresh, !!walletAddress, 60);
+  const handleFilterChange = (filter: "all" | "high" | "medium" | "low") => {
+    startTransition(() => {
+      setRiskFilter(filter);
+      setCurrentPage(1);
+    });
+  };
 
-  const filteredTokens = flaggedTokens.filter(token => {
-    const matchesSearch = token.symbol.toLowerCase().includes(searchTerm.toLowerCase()) || 
-                          (token.reasons?.some(r => r.toLowerCase().includes(searchTerm.toLowerCase())) ?? false);
-    const matchesFilter = riskFilter === "all" || 
-                          (riskFilter === "high" && (token.riskLevel === "high" || token.riskLevel === "critical")) ||
-                          token.riskLevel === riskFilter;
-    return matchesSearch && matchesFilter;
-  }).sort((a, b) => {
-    return sortOrder === "desc" 
-      ? b.score - a.score 
-      : a.score - b.score;
-  });
+  const handleSortChange = () => {
+    startTransition(() => {
+      setSortOrder(prev => (prev === "desc" ? "asc" : "desc"));
+      setCurrentPage(1);
+    });
+  };
+
+  const handleSearchChange = (term: string) => {
+    setSearchTerm(term);
+    setCurrentPage(1);
+  };
+
+  const filteredTokens = useMemo(() => {
+    const lowerSearch = searchTerm.toLowerCase();
+
+    const baseList =
+      riskFilter === "high"
+        ? groupedTokens.high
+        : riskFilter === "medium"
+        ? groupedTokens.medium
+        : riskFilter === "low"
+        ? groupedTokens.low
+        : groupedTokens.all;
+
+    // No search term: just return pre-sorted list (or reversed if asc)
+    if (!lowerSearch) {
+      if (sortOrder === "asc") {
+        return [...baseList].reverse();
+      }
+      return baseList;
+    }
+
+    const searched = baseList.filter((token) => {
+      const symbol = token.symbol ? token.symbol.toLowerCase() : "";
+      return (
+        symbol.includes(lowerSearch) ||
+        (token.reasons?.some((r) => r && r.toLowerCase().includes(lowerSearch)) ??
+          false)
+      );
+    });
+
+    if (sortOrder === "asc") {
+      return searched.slice().reverse();
+    }
+    return searched;
+  }, [groupedTokens, riskFilter, searchTerm, sortOrder]);
 
   const totalPages = Math.ceil(filteredTokens.length / itemsPerPage);
   const paginatedTokens = filteredTokens.slice(
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
   );
+
+  useEffect(() => {
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const maxVisible = Math.min(itemsPerPage, Math.max(filteredTokens.length - startIndex, 0));
+    if (maxVisible <= 0) {
+      setVisibleCount(0);
+      return;
+    }
+    let cancelled = false;
+    const initial = Math.min(5, maxVisible);
+    setVisibleCount(initial);
+    if (maxVisible <= initial) {
+      return;
+    }
+    const batchSize = 5;
+    const loadBatch = () => {
+      if (cancelled) return;
+      setVisibleCount(prev => {
+        const next = Math.min(prev + batchSize, maxVisible);
+        if (next < maxVisible) {
+          requestAnimationFrame(loadBatch);
+        }
+        return next;
+      });
+    };
+    requestAnimationFrame(loadBatch);
+    return () => {
+      cancelled = true;
+    };
+  }, [filteredTokens, currentPage, itemsPerPage]);
 
   return (
     <DashboardLayout walletAddress={walletAddress || ''} onDisconnect={handleDisconnect}>
@@ -285,7 +382,7 @@ export default function ScamTokenAlertPage() {
         </div>
 
         {/* Main Content */}
-        <div className="space-y-6">
+        <div className={cn("space-y-6 transition-opacity duration-150", isPending ? "opacity-60" : "opacity-100")}>
           {/* Controls */}
           <div className="flex flex-col lg:flex-row gap-4 items-start lg:items-center justify-between">
             <div className="relative w-full lg:w-96">
@@ -293,7 +390,7 @@ export default function ScamTokenAlertPage() {
               <Input
                 placeholder={t('scam.search_placeholder')}
                 value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                onChange={(e) => handleSearchChange(e.target.value)}
                 className="pl-8"
               />
             </div>
@@ -332,7 +429,7 @@ export default function ScamTokenAlertPage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setSortOrder(prev => prev === "desc" ? "asc" : "desc")}
+                  onClick={handleSortChange}
                   className="whitespace-nowrap"
                 >
                   <ArrowUpDown className="h-4 w-4 mr-2" />
@@ -340,15 +437,16 @@ export default function ScamTokenAlertPage() {
                 </Button>
                 
                 <div className="h-6 w-px bg-border mx-1 hidden sm:block"></div>
-                <FilterButton active={riskFilter === "all"} onClick={() => setRiskFilter("all")} label={t('scam.all_risks')} />
-                <FilterButton active={riskFilter === "high"} onClick={() => setRiskFilter("high")} label={t('scam.high_risk')} variant="destructive" />
-                <FilterButton active={riskFilter === "medium"} onClick={() => setRiskFilter("medium")} label={t('scam.medium_risk')} variant="warning" />
-                <FilterButton active={riskFilter === "low"} onClick={() => setRiskFilter("low")} label={t('scam.low_risk')} variant="success" />
+                <FilterButton active={riskFilter === "all"} onClick={() => handleFilterChange("all")} label={t('scam.all_risks')} />
+                <FilterButton active={riskFilter === "high"} onClick={() => handleFilterChange("high")} label={t('scam.high_risk')} variant="destructive" />
+                <FilterButton active={riskFilter === "medium"} onClick={() => handleFilterChange("medium")} label={t('scam.medium_risk')} variant="warning" />
+                <FilterButton active={riskFilter === "low"} onClick={() => handleFilterChange("low")} label={t('scam.low_risk')} variant="success" />
               </div>
             </div>
           </div>
 
           {/* Token List/Grid */}
+          <div>
           {error ? (
             <Card className="border-destructive/50 bg-destructive/5">
               <CardContent className="flex flex-col items-center justify-center p-6 text-center">
@@ -381,7 +479,7 @@ export default function ScamTokenAlertPage() {
                         : t('scam.greatNews'))}
                 </p>
                 {(searchTerm || riskFilter !== 'all') && (
-                  <Button variant="link" onClick={() => { setSearchTerm(""); setRiskFilter("all"); }} className="mt-2">
+                  <Button variant="link" onClick={() => { setSearchTerm(""); handleFilterChange("all"); }} className="mt-2">
                     {t('common.clear_all')}
                   </Button>
                 )}
@@ -403,15 +501,15 @@ export default function ScamTokenAlertPage() {
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {paginatedTokens.map((token, index) => (
-                        <TokenRiskRow key={`${token.tokenAddress}-${index}`} token={token} />
+                      {paginatedTokens.slice(0, visibleCount).map((token, index) => (
+                        <TokenRiskRow key={token.tokenAddress || index} token={token} />
                       ))}
                     </TableBody>
                   </Table>
                 ) : (
                   <div className="p-4 grid gap-6 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-                    {paginatedTokens.map((token, index) => (
-                      <TokenRiskCard key={`${token.tokenAddress}-${index}`} token={token} />
+                    {paginatedTokens.slice(0, visibleCount).map((token, index) => (
+                      <TokenRiskCard key={token.tokenAddress || index} token={token} />
                     ))}
                   </div>
                 )}
@@ -419,42 +517,52 @@ export default function ScamTokenAlertPage() {
 
               {/* Pagination */}
               {totalPages > 1 && (
-                <div className="flex items-center justify-between px-2">
-                  <p className="text-sm text-muted-foreground">
-                    {t('transactions.showing').replace('{count}', String(((currentPage - 1) * itemsPerPage) + 1) + '-' + String(Math.min(currentPage * itemsPerPage, filteredTokens.length))).replace('{total}', String(filteredTokens.length))}
+                <div className="flex flex-col items-center justify-center gap-3 py-4">
+                  <p className="text-sm md:text-base text-muted-foreground text-center">
+                    {t('transactions.showing')
+                      .replace(
+                        '{count}',
+                        String(((currentPage - 1) * itemsPerPage) + 1) +
+                          '-' +
+                          String(Math.min(currentPage * itemsPerPage, filteredTokens.length))
+                      )
+                      .replace('{total}', String(filteredTokens.length))}
                   </p>
-                  <div className="flex items-center space-x-2">
+                  <div className="flex items-center space-x-4">
                     <Button
                       variant="outline"
-                      size="sm"
+                      size="lg"
+                      className="h-11 w-11 rounded-full"
                       onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
                       disabled={currentPage === 1}
                     >
-                      <ChevronLeft className="h-4 w-4" />
+                      <ChevronLeft className="h-5 w-5" />
                     </Button>
-                    <div className="text-sm font-medium">
+                    <div className="text-base md:text-lg font-semibold min-w-[80px] text-center">
                       {currentPage} / {totalPages}
                     </div>
                     <Button
                       variant="outline"
-                      size="sm"
+                      size="lg"
+                      className="h-11 w-11 rounded-full"
                       onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
                       disabled={currentPage === totalPages}
                     >
-                      <ChevronRight className="h-4 w-4" />
+                      <ChevronRight className="h-5 w-5" />
                     </Button>
                   </div>
                 </div>
               )}
             </div>
           )}
+          </div>
         </div>
       </div>
     </DashboardLayout>
   );
 }
 
-function TokenRiskRow({ token }: { token: FlaggedToken }) {
+const TokenRiskRow = memo(function TokenRiskRow({ token }: { token: FlaggedToken }) {
   const [expanded, setExpanded] = useState(false);
   const { t } = useTranslation();
   
@@ -531,17 +639,16 @@ function TokenRiskRow({ token }: { token: FlaggedToken }) {
               <div className="text-xs text-muted-foreground font-mono break-all">
                 {token.tokenAddress}
               </div>
-              <TokenEvidenceDetail token={token} />
+              {expanded && <TokenEvidenceDetail token={token} />}
             </div>
           </div>
         </TableCell>
       </TableRow>
     </>
   );
-}
+});
 
-// Extracted evidence display to reusable component
-function TokenEvidenceDetail({ token }: { token: FlaggedToken }) {
+const TokenEvidenceDetail = memo(function TokenEvidenceDetail({ token }: { token: FlaggedToken }) {
   const { t } = useTranslation();
   const ev = (token.evidence || {}) as ScamEvidence;
   const features = (ev.features || {}) as Record<string, unknown>;
@@ -633,10 +740,9 @@ function TokenEvidenceDetail({ token }: { token: FlaggedToken }) {
       </div>
     </div>
   );
-}
+});
 
-// Retain old card for grid view but use the shared evidence component
-function TokenRiskCard({ token }: { token: FlaggedToken }) {
+const TokenRiskCard = memo(function TokenRiskCard({ token }: { token: FlaggedToken }) {
   const [expanded, setExpanded] = useState(false);
   const { t } = useTranslation();
   
@@ -697,14 +803,14 @@ function TokenRiskCard({ token }: { token: FlaggedToken }) {
           <div className={cn("mt-3 transition-all duration-300 overflow-hidden", expanded ? "max-h-[600px] opacity-100" : "max-h-0 opacity-0")}> 
             <div className="space-y-2">
               <div className="text-xs text-muted-foreground font-mono break-all">{token.tokenAddress}</div>
-              <TokenEvidenceDetail token={token} />
+              {expanded && <TokenEvidenceDetail token={token} />}
             </div>
           </div>
         </div>
       </CardContent>
     </Card>
   );
-}
+});
 
 function StatCard({ title, value, icon: Icon, color, bg }: { title: string, value: number, icon: React.ElementType, color: string, bg: string }) {
   return (

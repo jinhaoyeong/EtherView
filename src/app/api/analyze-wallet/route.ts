@@ -182,7 +182,7 @@ export async function POST(request: NextRequest) {
     console.log('⚡ FAST-START: Basic data ready in', performance.now() - startTime, 'ms');
 
     // ⚡ PRIORITY 2: Get basic transactions with timeout
-    let basicTransactions: Transaction[] = [];
+    let basicTransactions: TransactionInfo[] = [];
     try {
       const txPage1 = await WalletAPI.fetchTransactions(walletAddress, 1, 200);
       basicTransactions = [...txPage1];

@@ -111,7 +111,7 @@ type AnalyzedToken = TokenPosition & {
 
 // Cache to store portfolio data and prevent re-fetching when switching tabs
 const portfolioCache = new Map<string, { data: PortfolioData | null; timestamp: number }>();
-const CACHE_DURATION = 30000; // 30 seconds cache
+const CACHE_DURATION = 120000;
 
 export function EnhancedOverview({ walletAddress }: { walletAddress: string }) {
   const [portfolioData, setPortfolioData] = useState<PortfolioData | null>(null);
@@ -338,100 +338,6 @@ export function EnhancedOverview({ walletAddress }: { walletAddress: string }) {
         correlations: []
       };
       setAIInsights({ scamAnalysis: [], sentimentAnalysis: sentimentResults ?? defaultSentiment, whaleMovements: whaleResults ?? defaultWhale, marketOutlook: generateMarketOutlook(sentimentResults ?? defaultSentiment, whaleResults ?? defaultWhale) });
-      const scamResults: ScamDetectionResult[] = [];
-      const mediumRiskTokens: AnalyzedToken[] = [];
-      const highRiskTokens: AnalyzedToken[] = [];
-      if (false) { // DISABLED - Skip scam analysis to show all tokens
-        console.log('🔍 Running comprehensive scam analysis on portfolio tokens...');
-        setAnalysisProgress(prev => ({ ...prev, current: 0, total: finalTokens.length, stage: 'complete', message: `Analysis complete` }));
-        let tokensAnalyzed = 0;
-        const engine = new ScamDetectionEngine();
-        const concurrency = 6;
-        const tasks: Promise<void>[] = [];
-        for (let i = 0; i < finalTokens.length; i++) {
-          const token = finalTokens[i];
-          const p = (async () => {
-            try {
-              const tokenName = (token.name || '').toLowerCase();
-              const tokenSymbol = (token.symbol || '').toLowerCase();
-              const OBVIOUS_SCAM_PATTERNS = [/visit\s+(website|site|link|url)\s+/, /claim\s+(rewards?|bonus|airdrop|free)\s+(at|from|on)/, /earn\s+(rewards?|bonus|free)/, /website\s+(to|for)\s+claim/, /https?:\/\/\S+/, /www\.\S+/, /\.com\b/, /\.org\b/, /\.net\b/, /\.io\b/, /\.(xyz|app|finance|crypto|tech)\b/, /connect\s+wallet/, /approve\s+(now|token|contract)/, /urgent\s+(claim|action)/, /limited\s+time/, /act\s+now/];
-              const isObviousScam = OBVIOUS_SCAM_PATTERNS.some(pattern => pattern.test(tokenName) || pattern.test(tokenSymbol));
-              if (isObviousScam) {
-                highRiskTokens.push({ ...token, scamResult: { tokenAddress: token.address || '', symbol: token.symbol || 'UNKNOWN', score: 95, riskLevel: 'high', confidencePct: 95, reasons: ['Token name contains obvious scam/phishing pattern'], evidence: { suspiciousNamePattern: tokenName } }, riskLevel: 'high', verified: false, immediateFlag: true });
-                return;
-              }
-              let scamResult = await engine.analyzeToken({ address: token.address || '', symbol: token.symbol || 'UNKNOWN', name: token.name || 'Unknown Token', decimals: ((): number => { const d = (token as { decimals?: number }).decimals; return typeof d === 'number' ? d : 18 })(), verified: token.verified !== false, valueUSD: typeof token.valueUSD === 'number' ? token.valueUSD : 0, balance: token.balance?.toString() || '0' }, walletAddress);
-              const hasNoPriceData = token.hasNoPriceData || (typeof token.valueUSD === 'number' ? token.valueUSD : 0) === 0;
-              const isUnverified = token.verified === false;
-              if (hasNoPriceData && isUnverified && scamResult.riskLevel === 'low') {
-                scamResult = {
-                  ...scamResult,
-                  riskLevel: 'medium',
-                  score: Math.max(scamResult.score, 45),
-                  reasons: [...(scamResult.reasons || []), 'Unverified with no price data']
-                };
-              }
-              scamResults.push(scamResult);
-              if (scamResult.riskLevel === 'high') {
-                highRiskTokens.push({ ...token, scamResult, riskLevel: scamResult.riskLevel, verified: token.verified !== false });
-              }
-              else if (scamResult.riskLevel === 'medium') {
-                mediumRiskTokens.push({ ...token, scamResult, riskLevel: scamResult.riskLevel, verified: token.verified !== false });
-              }
-              
-            } catch (err) {
-              const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-              highRiskTokens.push({ ...token, scamResult: null, riskLevel: 'high', verified: token.verified !== false, analysisError: errorMessage });
-            } finally {
-              tokensAnalyzed++;
-              setAnalysisProgress(prev => ({ ...prev, current: tokensAnalyzed, message: `Analyzing ${token.symbol || 'UNKNOWN'} (${tokensAnalyzed}/${finalTokens.length})...`, tokensAnalyzed }));
-            }
-          })();
-          tasks.push(p);
-          if (tasks.length >= concurrency) {
-            await Promise.all(tasks);
-            tasks.length = 0;
-          }
-        }
-        if (tasks.length > 0) {
-          await Promise.all(tasks);
-        }
-      const totalTime = Date.now() - startTime;
-      console.log(`✅ Analysis complete: ${tokensAnalyzed} tokens analyzed in ${totalTime}ms`);
-      
-        setAnalysisProgress(prev => ({ ...prev, current: tokensAnalyzed, total: tokensAnalyzed, stage: 'complete', message: `✅ Analysis complete! Found ${highRiskTokens.length} high-risk and ${mediumRiskTokens.length} medium-risk tokens` }));
-        setTimeout(() => { setIsAnalyzingTokens(false); console.log('🎉 Progress indicator hidden - analysis fully complete'); }, 2000);
-      } else { console.log('ℹ️ No tokens found to analyze'); setAnalysisProgress(prev => ({ ...prev, stage: 'complete', message: '✅ No tokens to analyze', current: 0, total: 0 })); setTimeout(() => { setIsAnalyzingTokens(false); }, 1000); }
-      // Skip scam filtering - show ALL tokens
-      // const serverTokens = ((analysisResult?.data?.portfolio?.tokens || []) as TokenPosition[]);
-      // const removalKeys = new Set<string>();
-      // for (const t of highRiskTokens.filter(x => x.immediateFlag || x.riskLevel === 'high' || x.riskLevel === 'critical')) {
-      //   const sym = (t.symbol || '').toUpperCase();
-      //   const addrRaw = (t.address || '').toLowerCase();
-      //   const isEthSym = sym === 'ETH';
-      //   const isEthAddr = addrRaw === '' || addrRaw === '0x0000000000000000000000000000000000000000' || addrRaw === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
-      //   const key = isEthSym || isEthAddr ? 'eth' : (addrRaw || (t.symbol || '').toLowerCase());
-      //   if (key && key !== 'eth') removalKeys.add(key);
-      // }
-      // const filteredFinal = finalTokens.filter((t: TokenPosition) => {
-      //   const sym = (t.symbol || '').toUpperCase();
-      //   const addrRaw = (t.address || '').toLowerCase();
-      //   const isEthSym = sym === 'ETH';
-      //   const isEthAddr = addrRaw === '' || addrRaw === '0x0000000000000000000000000000000000000000' || addrRaw === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
-      //   const key = isEthSym || isEthAddr ? 'eth' : (addrRaw || (t.symbol || '').toLowerCase());
-      //   return key ? !removalKeys.has(key) : true;
-      // });
-      // const filteredServer = serverTokens.filter((t: TokenPosition) => {
-      //   const sym = (t.symbol || '').toUpperCase();
-      //   const addrRaw = (t.address || '').toLowerCase();
-      //   const isEthSym = sym === 'ETH';
-      //   const isEthAddr = addrRaw === '' || addrRaw === '0x0000000000000000000000000000000000000000' || addrRaw === '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee';
-      //   const key = isEthSym || isEthAddr ? 'eth' : (addrRaw || (t.symbol || '').toLowerCase());
-      //   return key ? !removalKeys.has(key) : true;
-      // });
-      // const mergedRaw = [...filteredFinal, ...filteredServer];
-
-      // Use all tokens without filtering
       const mergedRaw = [...finalTokens];
       const mergedDedup = new Map<string, TokenPosition>();
       for (const t of mergedRaw) {

@@ -5,7 +5,7 @@
 
 import { realNewsAggregator, EnrichedNewsArticle } from './realNewsAggregator';
 import { RealSentimentAnalyzer } from './realSentimentAnalyzer';
-import { SentimentAnalysis } from './realSentimentAnalyzer';
+import type { SentimentAnalysis } from './sentimentAnalyzer';
 
 // Create a single instance to reuse API keys
 const realSentimentAnalyzer = new RealSentimentAnalyzer();
@@ -116,14 +116,15 @@ export class SentimentAnalysisEngine {
           // Step 2: Parallel processing of sentiment analysis and social signals
           console.log('🧠 Step 2: Performing AI sentiment analysis on articles...');
           const sentimentAnalysesPromise = (async () => {
-            // Always use real AI analyzer; fast mode reduces count and tokens
+            const batchSize = limitedArticles.length;
+            const delayBetweenBatches = fast ? 0 : 200;
             return performanceManager.executeBatch(
               limitedArticles,
               (article) => realSentimentAnalyzer.analyzeSentiment(article, { mode: fast ? 'fast' : 'normal' }),
               {
-                batchSize: fast ? 3 : 5,
-                concurrency: 2,
-                delayBetweenBatches: fast ? 500 : 1000,
+                batchSize,
+                concurrency: 3,
+                delayBetweenBatches,
                 cacheKey: (article) => `sentiment_glm_${article.id}_${fast ? 'fast' : 'normal'}`,
                 cacheTTL: 30 * 60 * 1000
               }
@@ -237,7 +238,8 @@ export class SentimentAnalysisEngine {
         timeHorizon: 'Short-term (4-24h)',
         keyFactors: { positive: [], negative: [], neutral: [] },
         riskFactors: ['Limited data availability'],
-        marketSignals: { volume: 'Low', volatility: 'Low', momentum: 'Weak' }
+        marketSignals: { volume: 'Low', volatility: 'Low', momentum: 'Weak' },
+        correlationScore: 0
       },
       socialSignals: {
         overallScore: 0,

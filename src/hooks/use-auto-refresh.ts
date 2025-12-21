@@ -9,7 +9,7 @@ export function useAutoRefresh(
   defaultInterval: number = 60
 ) {
   const { settings } = useSettings();
-  const savedCallback = useRef<() => void>();
+  const savedCallback = useRef<(() => void) | undefined>(() => {});
 
   // Remember the latest callback
   useEffect(() => {

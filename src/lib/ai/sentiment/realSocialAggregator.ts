@@ -367,8 +367,9 @@ export class RealSocialAggregator {
 
   private async analyzePlatformSentiments(articles: any[]): Promise<SocialSentimentSummary['platformAnalysis']> {
     let scores: SocialSentimentSummary['platformAnalysis'] = {
-      twitter: { score: 0, count: 0 },
       reddit: { score: 0, count: 0 },
+      youtube: { score: 0, count: 0 },
+      twitter: { score: 0, count: 0 },
       telegram: { score: 0, count: 0 }
     };
 
@@ -420,14 +421,17 @@ export class RealSocialAggregator {
       }
 
       scores = {
-        overall: Math.max(-1, Math.min(1, overallSentiment)),
-        twitter: {
-          score: twitterCount > 0 ? Math.max(-1, Math.min(1, twitterSentiment / twitterCount)) : 0,
-          count: twitterCount
-        },
         reddit: {
           score: redditCount > 0 ? Math.max(-1, Math.min(1, redditSentiment / redditCount)) : 0,
           count: redditCount
+        },
+        youtube: {
+          score: Math.max(-1, Math.min(1, overallSentiment)),
+          count: articles.length
+        },
+        twitter: {
+          score: twitterCount > 0 ? Math.max(-1, Math.min(1, twitterSentiment / twitterCount)) : 0,
+          count: twitterCount
         },
         telegram: {
           score: telegramCount > 0 ? Math.max(-1, Math.min(1, telegramSentiment / telegramCount)) : 0,
@@ -448,17 +452,25 @@ export class RealSocialAggregator {
     const influencerWeight = 0.7;
     const platformWeight = 0.3;
 
-    const influencerScore = influencerSignals.length > 0 ?
-      influencerSignals.reduce((sum, inf) => {
-        const sentimentScore = inf.sentiment === 'Bullish' ? 1 : inf.sentiment === 'Bearish' ? -1 : 0;
-        return sum + (sentimentScore * inf.confidence * inf.influenceScore);
-      }, 0) / influencerSignals.length : 0;
+    const influencerScore = influencerSignals.length > 0
+      ? influencerSignals.reduce((sum, inf) => {
+          const sentimentScore = inf.sentiment === 'Bullish' ? 1 : inf.sentiment === 'Bearish' ? -1 : 0;
+          return sum + (sentimentScore * inf.confidence * inf.influenceScore);
+        }, 0) / influencerSignals.length
+      : 0;
 
-    const platformScore = (
-      platformScores.twitter.score +
-      platformScores.reddit.score +
-      platformScores.telegram.score
-    ) / 3;
+    const twitterScore = platformScores.twitter ? platformScores.twitter.score : 0;
+    const redditScore = platformScores.reddit.score;
+    const telegramScore = platformScores.telegram ? platformScores.telegram.score : 0;
+
+    const platformCount =
+      (platformScores.twitter ? 1 : 0) +
+      1 +
+      (platformScores.telegram ? 1 : 0);
+
+    const platformScore = platformCount > 0
+      ? (twitterScore + redditScore + telegramScore) / platformCount
+      : 0;
 
     return (influencerScore * influencerWeight) + (platformScore * platformWeight);
   }

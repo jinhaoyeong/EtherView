@@ -101,6 +101,9 @@ interface Prediction {
   technicalIndicators?: { rsi?: number; macd?: number; bollinger?: 'Upper' | 'Middle' | 'Lower'; support?: number; resistance?: number };
 }
 
+const newsCache = new Map<string, { data: { marketSummary: MarketSummary | null; newsArticles: NewsArticle[]; prediction: Prediction | null }; timestamp: number }>();
+const NEWS_CACHE_DURATION = 120000;
+
 export default function NewsSentiment() {
   const { walletAddress, handleDisconnect } = useWallet();
   const { t } = useTranslation();
@@ -111,7 +114,7 @@ export default function NewsSentiment() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isDataCached, setIsDataCached] = useState(false);
-  const [useFastMode, setUseFastMode] = useState(false);
+  const [useFastMode, setUseFastMode] = useState(true);
   
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
@@ -156,8 +159,23 @@ export default function NewsSentiment() {
   const loadNewsSentiment = async (address: string, forceRefresh: boolean = false) => {
     try {
       const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
-      setLoading(true);
       setError(null);
+
+      const cacheKey = `${address}_${useFastMode ? 'fast' : 'full'}`;
+      if (!forceRefresh) {
+        const cached = newsCache.get(cacheKey);
+        const now = Date.now();
+        if (cached && (now - cached.timestamp) < NEWS_CACHE_DURATION) {
+          setMarketSummary(cached.data.marketSummary);
+          setNewsArticles(cached.data.newsArticles);
+          setPrediction(cached.data.prediction);
+          setIsDataCached(true);
+          setLoading(false);
+          return;
+        }
+      }
+
+      setLoading(true);
 
       console.log(`📰 Loading news sentiment analysis${forceRefresh ? ' (forced refresh)' : ' (using cache if available)'}...`);
 
@@ -335,6 +353,15 @@ export default function NewsSentiment() {
       setNewsArticles(transformedArticles);
       setPrediction(transformedPrediction);
       setIsDataCached(!forceRefresh && transformedArticles.length > 0);
+
+      newsCache.set(cacheKey, {
+        data: {
+          marketSummary: transformedMarketSummary,
+          newsArticles: transformedArticles,
+          prediction: transformedPrediction
+        },
+        timestamp: Date.now()
+      });
       const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
       const duration = Math.round((t1 - t0));
       try {

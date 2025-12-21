@@ -11,7 +11,7 @@ AI‑powered Ethereum wallet dashboard with wallet overview, transactions, whale
 - News sentiment analysis with GLM/OpenAI fallback and local heuristics
 - Category normalization: Macroeconomic, Geopolitical, Regulation, Technology, Social, Market
 - Multi‑sentence article insights for readability
-- Cost Saver mode to control API usage (3 vs 10 articles)
+- Cost Saver mode to control API usage (5 vs 10 articles)
 - Settings for theme, language, currency, refresh, and privacy
 
 ## Getting Started
@@ -96,7 +96,7 @@ Configure in `.env.local` (as available):
 ## Cost Saver (News)
 
 - Toggle in News header: `Cost Saver: On/Off`
-- On: analyzes top 3 articles; Off: up to 10 articles
+- On: analyzes top 5 articles; Off: up to 10 articles
 - Frontend caps displayed list; backend matches the cap for analysis
 
 ## Development Notes

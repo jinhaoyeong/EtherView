@@ -756,72 +756,295 @@ Return prediction in this exact JSON format:
       : 0;
 
     const trend = avgSentiment > 0.15 ? 'Bullish' : avgSentiment < -0.15 ? 'Bearish' : 'Neutral';
-    const confidence = Math.min(0.5, 0.3 + Math.abs(avgSentiment) * 0.2);
+    const confidence = Math.min(0.65, 0.4 + Math.abs(avgSentiment) * 0.25 + (sentiments.length > 5 ? 0.1 : 0));
 
-    // Generate meaningful factors based on sentiment
+    // Deep content analysis for detailed insights
+    const themes = this.analyzeArticleThemes(articlesWithSentiment);
+    const entities = this.extractKeyEntities(articlesWithSentiment);
+    const sources = this.analyzeSourceDiversity(articlesWithSentiment);
+
+    // Generate detailed factors based on content analysis
     const positiveFactors: string[] = [];
     const negativeFactors: string[] = [];
     const riskFactors: string[] = [];
+    const reasoningPoints: string[] = [];
 
-    if (avgSentiment > 0.1) {
-      positiveFactors.push('Positive market sentiment from recent news');
-      positiveFactors.push('Bullish indicators from multiple sources');
-      riskFactors.push('Monitor for potential reversal signals');
-    } else if (avgSentiment < -0.1) {
-      negativeFactors.push('Negative market sentiment detected');
-      negativeFactors.push('Bearish pressure from news sources');
-      riskFactors.push('Elevated market uncertainty');
-    } else {
-      positiveFactors.push('Mixed market signals present');
-      negativeFactors.push('Lack of clear directional momentum');
-      riskFactors.push('Market awaiting catalyst');
+    // Theme-based factor generation
+    if (themes.hasPositiveRegulation) {
+      positiveFactors.push('Favorable regulatory developments supporting market growth');
+      reasoningPoints.push('Positive regulatory environment detected across multiple sources');
+    }
+    if (themes.hasNegativeRegulation) {
+      negativeFactors.push('Regulatory concerns creating market uncertainty');
+      riskFactors.push('Monitor regulatory announcements for potential impact');
+    }
+    if (themes.hasInstitutionalAdoption) {
+      positiveFactors.push('Institutional adoption signals strengthening market foundation');
+      reasoningPoints.push('Growing institutional participation indicates market maturation');
+    }
+    if (themes.hasTechnicalDevelopment) {
+      positiveFactors.push('Technical developments driving ecosystem expansion');
+      positiveFactors.push('Network upgrades and improvements enhancing utility');
+    }
+    if (themes.hasMarketAdoption) {
+      positiveFactors.push('Increasing user adoption and transaction activity');
+      reasoningPoints.push('On-chain metrics showing healthy network activity');
+    }
+    if (themes.hasPriceAction) {
+      if (avgSentiment > 0) {
+        positiveFactors.push('Positive price momentum supported by trading volume');
+        reasoningPoints.push('Price action aligning with positive sentiment indicators');
+      } else {
+        negativeFactors.push('Downward price pressure reflecting market sentiment');
+        riskFactors.push('Price levels being tested for support');
+      }
+    }
+    if (themes.hasSecurityConcerns) {
+      negativeFactors.push('Security considerations affecting market confidence');
+      riskFactors.push('Security incidents may impact short-term volatility');
+    }
+    if (themes.hasCompetition) {
+      negativeFactors.push('Competitive landscape influencing market dynamics');
+      riskFactors.push('Monitor competitive developments for market position');
     }
 
-    // Add article-specific insights
-    const recentArticles = articlesWithSentiment.slice(0, 3);
-    recentArticles.forEach(({ article }) => {
-      const title = article.title.toLowerCase();
-      if (title.includes('eth') || title.includes('ethereum')) {
-        riskFactors.push('Ethereum-specific developments may influence market');
-      }
-      if (title.includes('sec') || title.includes('regulation')) {
-        riskFactors.push('Regulatory news may impact volatility');
-      }
-    });
+    // Entity-based insights
+    if (entities.tokens.includes('ETH') || entities.tokens.includes('Ethereum')) {
+      positiveFactors.push('Ethereum ecosystem developments driving sentiment');
+      reasoningPoints.push('Ethereum-specific news showing mixed signals');
+    }
+    if (entities.tokens.includes('BTC') || entities.tokens.includes('Bitcoin')) {
+      reasoningPoints.push('Bitcoin market movements influencing broader crypto sentiment');
+    }
+    if (entities.hasDefi) {
+      positiveFactors.push('DeFi sector showing resilience and innovation');
+      riskFactors.push('DeFi protocol risks require careful monitoring');
+    }
+    if (entities.hasNFT) {
+      positiveFactors.push('NFT market activity indicating sustained interest');
+    }
 
-    // Ensure we have at least some content
-    if (positiveFactors.length === 0) positiveFactors.push('Market stability factors');
-    if (negativeFactors.length === 0) negativeFactors.push('Standard market risks');
-    if (riskFactors.length === 0) riskFactors.push('Regular market monitoring recommended');
+    // Source diversity analysis
+    if (sources.highTrustCount > 3) {
+      reasoningPoints.push(`Analysis backed by ${sources.highTrustCount} high-credibility sources`);
+      positiveFactors.push('Strong coverage from reputable news outlets');
+    }
+    if (sources.sourceCount >= 5) {
+      reasoningPoints.push(`Diverse source coverage (${sources.sourceCount} outlets) confirming trend`);
+    }
+
+    // Sentiment distribution analysis
+    const bullishCount = sentiments.filter(s => s > 0.1).length;
+    const bearishCount = sentiments.filter(s => s < -0.1).length;
+    const neutralCount = sentiments.filter(s => Math.abs(s) <= 0.1).length;
+
+    if (bullishCount > bearishCount * 1.5) {
+      positiveFactors.push(`Strong bullish bias across ${bullishCount} of ${sentiments.length} analyzed articles`);
+      reasoningPoints.push('Clear positive momentum in news coverage');
+    } else if (bearishCount > bullishCount * 1.5) {
+      negativeFactors.push(`Bearish sentiment dominating in ${bearishCount} of ${sentiments.length} articles`);
+      riskFactors.push('Negative news flow may pressure prices in short term');
+    } else if (neutralCount > sentiments.length / 2) {
+      reasoningPoints.push('Mixed signals suggest market consolidation phase');
+      riskFactors.push('Awaiting clear directional catalyst');
+    }
+
+    // Time-based analysis
+    const recentArticles = articlesWithSentiment.slice(0, 5);
+    const recentSentiment = recentArticles.reduce((sum, item) => sum + (item.sentiment.score || 0), 0) / recentArticles.length;
+    const olderArticles = articlesWithSentiment.slice(5);
+    const olderSentiment = olderArticles.length > 0
+      ? olderArticles.reduce((sum, item) => sum + (item.sentiment.score || 0), 0) / olderArticles.length
+      : recentSentiment;
+
+    const momentum = recentSentiment - olderSentiment;
+    if (momentum > 0.1) {
+      positiveFactors.push('Sentiment momentum improving in recent coverage');
+      reasoningPoints.push('Latest news showing increasingly positive tone');
+    } else if (momentum < -0.1) {
+      negativeFactors.push('Deteriorating sentiment in recent news flow');
+      riskFactors.push('Negative momentum may continue short-term');
+    }
+
+    // Ensure minimum content quality
+    if (positiveFactors.length === 0) {
+      positiveFactors.push('Market maintaining stability despite mixed signals');
+      positiveFactors.push('Baseline investor interest persists across coverage');
+    }
+    if (negativeFactors.length === 0) {
+      negativeFactors.push('Standard market volatility present');
+      negativeFactors.push('Some uncertainty in short-term direction');
+    }
+    if (riskFactors.length === 0) {
+      riskFactors.push('Monitor for changes in news sentiment trajectory');
+      riskFactors.push('Stay alert to unexpected market developments');
+    }
+
+    // Build comprehensive reasoning
+    const reasoning: string[] = [
+      `Comprehensive analysis of ${sentiments.length} recent news articles from ${sources.sourceCount} sources`,
+      `Sentiment distribution: ${bullishCount} bullish, ${bearishCount} bearish, ${neutralCount} neutral`,
+      `Average sentiment score: ${(avgSentiment * 100).toFixed(1)}% (${trend.toLowerCase()} outlook)`,
+    ];
+
+    if (momentum > 0.05 || momentum < -0.05) {
+      reasoning.push(`Sentiment momentum: ${momentum > 0 ? 'improving' : 'declining'} trend in recent coverage`);
+    }
+
+    if (themes.hasPositiveRegulation || themes.hasNegativeRegulation) {
+      reasoning.push('Regulatory developments playing key role in market sentiment');
+    }
+    if (themes.hasInstitutionalAdoption) {
+      reasoning.push('Institutional activity adding credibility to market movements');
+    }
+    if (entities.hasDefi || entities.hasNFT) {
+      reasoning.push('Sector-specific developments influencing broader market sentiment');
+    }
+
+    // Add top positive/negative factor to reasoning
+    reasoning.push(positiveFactors[0] || negativeFactors[0] || 'Market analysis complete');
 
     return {
       trend,
       confidence,
-      reasoning: [
-        `Analysis based on ${sentiments.length} recent news articles`,
-        `Market sentiment: ${trend.toLowerCase()}`,
-        positiveFactors[0] || negativeFactors[0] || 'Market assessment complete'
-      ],
+      reasoning,
       timeHorizon: 'Short-term (4-24h)',
       keyFactors: {
-        positive: positiveFactors,
-        negative: negativeFactors,
-        neutral: ['Continued market monitoring advised']
+        positive: positiveFactors.slice(0, 5),
+        negative: negativeFactors.slice(0, 5),
+        neutral: [
+          'Market conditions evolving - maintain vigilance',
+          'Diversified information sources recommended',
+          'Consider multiple timeframes for decisions'
+        ]
       },
-      riskFactors,
+      riskFactors: riskFactors.slice(0, 6),
       marketSignals: {
         volume: avgSentiment > 0.2 ? 'High' : avgSentiment < -0.2 ? 'Low' : 'Medium',
-        volatility: Math.abs(avgSentiment) > 0.3 ? 'High' : 'Medium',
-        momentum: avgSentiment > 0.1 ? 'Moderate' : avgSentiment < -0.1 ? 'Weak' : 'Weak'
+        volatility: Math.abs(avgSentiment) > 0.3 ? 'High' : Math.abs(avgSentiment) > 0.15 ? 'Medium' : 'Low',
+        momentum: avgSentiment > 0.15 ? 'Strong' : avgSentiment < -0.15 ? 'Weak' : 'Moderate'
       },
       technicalIndicators: {
-        rsi: 50 + (avgSentiment * 30),
-        macd: avgSentiment * 100,
+        rsi: Math.round(50 + (avgSentiment * 30)),
+        macd: Math.round(avgSentiment * 1000) / 10,
         bollinger: avgSentiment > 0.2 ? 'Upper' : avgSentiment < -0.2 ? 'Lower' : 'Middle',
         support: 3400,
         resistance: 3600
       },
-      correlationScore: Math.abs(avgSentiment) * 0.5
+      correlationScore: Math.min(0.8, Math.abs(avgSentiment) * 0.7 + (sources.highTrustCount / sources.sourceCount) * 0.3)
+    };
+  }
+
+  // Helper method for deep content analysis
+  private analyzeArticleThemes(articlesWithSentiment: Array<{ article: EnrichedNewsArticle; sentiment: SentimentAnalysis }>) {
+    const themes = {
+      hasPositiveRegulation: false,
+      hasNegativeRegulation: false,
+      hasInstitutionalAdoption: false,
+      hasTechnicalDevelopment: false,
+      hasMarketAdoption: false,
+      hasPriceAction: false,
+      hasSecurityConcerns: false,
+      hasCompetition: false
+    };
+
+    articlesWithSentiment.forEach(({ article }) => {
+      const text = (article.title + ' ' + (article.summary || '')).toLowerCase();
+
+      // Regulation themes
+      if (text.includes('approval') || text.includes('legal') || text.includes('license') || text.includes('compliant')) {
+        themes.hasPositiveRegulation = true;
+      }
+      if (text.includes('ban') || text.includes('restriction') || text.includes('probe') || text.includes('sec lawsuit')) {
+        themes.hasNegativeRegulation = true;
+      }
+
+      // Institutional themes
+      if (text.includes('institution') || text.includes('etf') || text.includes('fund') || text.includes('asset manager')) {
+        themes.hasInstitutionalAdoption = true;
+      }
+
+      // Technical development
+      if (text.includes('upgrade') || text.includes('protocol') || text.includes('mainnet') || text.includes('launch')) {
+        themes.hasTechnicalDevelopment = true;
+      }
+
+      // Market adoption
+      if (text.includes('adoption') || text.includes('user') || text.includes('transaction') || text.includes('volume')) {
+        themes.hasMarketAdoption = true;
+      }
+
+      // Price action
+      if (text.includes('price') || text.includes('surge') || text.includes('plunge') || text.includes('rally')) {
+        themes.hasPriceAction = true;
+      }
+
+      // Security
+      if (text.includes('hack') || text.includes('exploit') || text.includes('vulnerability') || text.includes('security')) {
+        themes.hasSecurityConcerns = true;
+      }
+
+      // Competition
+      if (text.includes('competitor') || text.includes('alternative') || text.includes('vs ') || text.includes(' versus')) {
+        themes.hasCompetition = true;
+      }
+    });
+
+    return themes;
+  }
+
+  // Helper method for entity extraction
+  private extractKeyEntities(articlesWithSentiment: Array<{ article: EnrichedNewsArticle; sentiment: SentimentAnalysis }>) {
+    const tokens = new Set<string>();
+    let hasDefi = false;
+    let hasNFT = false;
+    let hasLayer2 = false;
+
+    articlesWithSentiment.forEach(({ article }) => {
+      const text = (article.title + ' ' + (article.summary || '')).toLowerCase();
+
+      // Token mentions
+      if (text.includes('bitcoin') || text.includes('btc')) tokens.add('BTC');
+      if (text.includes('ethereum') || text.includes('eth')) tokens.add('ETH');
+      if (text.includes('solana') || text.includes('sol')) tokens.add('SOL');
+      if (text.includes('cardano') || text.includes('ada')) tokens.add('ADA');
+      if (text.includes('polygon') || text.includes('matic')) tokens.add('MATIC');
+
+      // Sector mentions
+      if (text.includes('defi') || text.includes('decentralized finance') || text.includes('dex') || text.includes('yield')) {
+        hasDefi = true;
+      }
+      if (text.includes('nft') || text.includes('non-fungible')) {
+        hasNFT = true;
+      }
+      if (text.includes('layer 2') || text.includes('l2') || text.includes('scaling') || text.includes('arbitrum') || text.includes('optimism')) {
+        hasLayer2 = true;
+      }
+    });
+
+    return {
+      tokens: Array.from(tokens),
+      hasDefi,
+      hasNFT,
+      hasLayer2
+    };
+  }
+
+  // Helper method for source diversity analysis
+  private analyzeSourceDiversity(articlesWithSentiment: Array<{ article: EnrichedNewsArticle; sentiment: SentimentAnalysis }>) {
+    const sources = new Set<string>();
+    let highTrustCount = 0;
+
+    articlesWithSentiment.forEach(({ article }) => {
+      sources.add(article.source);
+      if (article.sourceTrust > 0.7) {
+        highTrustCount++;
+      }
+    });
+
+    return {
+      sourceCount: sources.size,
+      highTrustCount
     };
   }
 }

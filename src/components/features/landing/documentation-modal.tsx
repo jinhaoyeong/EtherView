@@ -1,240 +1,151 @@
 "use client";
 
+import { type ReactNode } from "react";
+import Link from "next/link";
+import { ArrowUpRight } from "lucide-react";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  BookOpen,
-  AlertTriangle,
-  Eye,
-  BarChart3,
-  HelpCircle,
-  Lock,
-  TrendingUp
-} from "lucide-react";
-import { useTranslation } from "@/hooks/use-translation";
 
-export function DocumentationModal({ trigger }: { trigger: React.ReactNode }) {
-  const { t } = useTranslation();
+const views = [
+  {
+    title: "Portfolio",
+    text: "Observed balances, token positions, and allocation. Estimates use available USD quotes and exclude unpriced assets.",
+  },
+  {
+    title: "Transactions & large transfers",
+    text: "Transfer records for the selected wallet. The large-transfer view filters the available history by estimated value; it is not a network-wide feed.",
+  },
+  {
+    title: "Token risk review",
+    text: "Contract signals and heuristic findings. A recognized contract or low risk score does not establish safety or sellability.",
+  },
+  {
+    title: "Ethereum briefing",
+    text: "Collected articles and available sentiment analysis. Sentiment describes content and is not a price forecast.",
+  },
+];
 
+export function DocumentationModal({ trigger }: { trigger: ReactNode }) {
   return (
     <Dialog>
-      <DialogTrigger asChild>
-        {trigger}
-      </DialogTrigger>
-      <DialogContent className="max-w-4xl max-h-[80vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <BookOpen className="h-5 w-5" />
-            {t('docs.title')}
+      <DialogTrigger asChild>{trigger}</DialogTrigger>
+      <DialogContent className="max-h-[85dvh] overflow-y-auto rounded-lg p-6 sm:max-w-2xl sm:p-8">
+        <DialogHeader className="text-left">
+          <DialogTitle className="text-2xl font-semibold tracking-tight">
+            Using EtherView
           </DialogTitle>
+          <DialogDescription className="mt-2 leading-relaxed">
+            A read-only dashboard for public Ethereum addresses.
+          </DialogDescription>
         </DialogHeader>
-
-        <Tabs defaultValue="getting-started" className="w-full">
-          <TabsList className="grid w-full grid-cols-4">
-            <TabsTrigger value="getting-started">{t('docs.tabs.gettingStarted')}</TabsTrigger>
-            <TabsTrigger value="features">{t('docs.tabs.features')}</TabsTrigger>
-            <TabsTrigger value="security">{t('docs.tabs.security')}</TabsTrigger>
-            <TabsTrigger value="faq">{t('docs.tabs.faq')}</TabsTrigger>
+        <Tabs defaultValue="start" className="mt-3">
+          <TabsList className="h-auto w-full justify-start rounded-lg bg-muted p-1">
+            <TabsTrigger value="start" className="rounded-lg">
+              Getting started
+            </TabsTrigger>
+            <TabsTrigger value="views" className="rounded-lg">
+              Dashboard sections
+            </TabsTrigger>
+            <TabsTrigger value="data" className="rounded-lg">
+              Data & coverage
+            </TabsTrigger>
           </TabsList>
-
-          <TabsContent value="getting-started" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <BookOpen className="h-5 w-5" />
-                  {t('docs.quickStart')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div>
-                  <h4 className="font-semibold mb-2">{t('docs.step1.title')}</h4>
-                  <p className="text-sm text-muted-foreground">
-                    {t('docs.step1.desc')}
-                  </p>
-                </div>
-
-                <div>
-                  <h4 className="font-semibold mb-2">{t('docs.step2.title')}</h4>
-                  <p className="text-sm text-muted-foreground">
-                    {t('docs.step2.desc')}
-                  </p>
-                </div>
-
-                <div>
-                  <h4 className="font-semibold mb-2">{t('docs.step3.title')}</h4>
-                  <p className="text-sm text-muted-foreground">
-                    {t('docs.step3.desc')}
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
+          <TabsContent value="start" className="mt-6">
+            <ol className="divide-y divide-border">
+              {[
+                {
+                  title: "Enter an address",
+                  text: "Use a full Ethereum address: 0x followed by 40 hexadecimal characters. Public examples are available on the home page. ENS names are not resolved by the search field.",
+                },
+                {
+                  title: "Review the records",
+                  text: "Open the portfolio, then use the navigation to review transfers, token risks, and news. Links to block explorers let you check source records.",
+                },
+                {
+                  title: "Adjust your preferences",
+                  text: "Settings controls the theme, display options, refresh intervals, and whether this browser remembers the last viewed address.",
+                },
+              ].map(({ title, text }, index) => (
+                <li key={title} className="flex gap-4 py-5 first:pt-0">
+                  <span className="pt-0.5 font-mono text-xs text-muted-foreground">
+                    0{index + 1}
+                  </span>
+                  <div>
+                    <h3 className="text-sm font-medium">{title}</h3>
+                    <p className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                      {text}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+            <p className="border-t border-border pt-4 text-xs leading-relaxed text-muted-foreground">
+              Looking up an address does not connect a wallet or request a
+              signature. Never enter a seed phrase or private key.
+            </p>
           </TabsContent>
-
-          <TabsContent value="features" className="space-y-4">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <BarChart3 className="h-5 w-5 text-blue-500" />
-                    {t('docs.features.portfolio')}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground mb-3">
-                    {t('docs.features.portfolio.desc')}
-                  </p>
-                  <ul className="text-sm space-y-1">
-                    <li>• {t('portfolio.total_value')}</li>
-                    <li>• {t('portfolio.eth_balance')}</li>
-                    <li>• {t('portfolio.token_positions')}</li>
-                    <li>• {t('portfolio.risk_assessment')}</li>
-                  </ul>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Eye className="h-5 w-5 text-green-500" />
-                    {t('docs.features.whale')}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground mb-3">
-                    {t('docs.features.whale.desc')}
-                  </p>
-                  <ul className="text-sm space-y-1">
-                    <li>• {t('whale.totalEvents')}</li>
-                    <li>• {t('whale.exchangeInflows')}</li>
-                    <li>• {t('whale.impact_analysis')}</li>
-                    <li>• {t('whale.confidence')}</li>
-                  </ul>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <AlertTriangle className="h-5 w-5 text-red-500" />
-                    {t('docs.features.scam')}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground mb-3">
-                    {t('docs.features.scam.desc')}
-                  </p>
-                  <ul className="text-sm space-y-1">
-                    <li>• {t('scam.riskLevel')}</li>
-                    <li>• {t('scam.evidence')}</li>
-                    <li>• {t('scam.score')}</li>
-                    <li>• {t('scam.confidence')}</li>
-                  </ul>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <TrendingUp className="h-5 w-5 text-orange-500" />
-                    {t('docs.features.news')}
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground mb-3">
-                    {t('docs.features.news.desc')}
-                  </p>
-                  <ul className="text-sm space-y-1">
-                    <li>• {t('news.marketSummary')}</li>
-                    <li>• {t('news.marketSentiment')}</li>
-                    <li>• {t('news.aiPrediction')}</li>
-                    <li>• {t('news.confidence')}</li>
-                  </ul>
-                </CardContent>
-              </Card>
-            </div>
+          <TabsContent value="views" className="mt-6">
+            <dl className="divide-y divide-border">
+              {views.map(({ title, text }) => (
+                <div key={title} className="py-4 first:pt-0">
+                  <dt className="text-sm font-medium">{title}</dt>
+                  <dd className="mt-2 text-sm leading-relaxed text-muted-foreground">
+                    {text}
+                  </dd>
+                </div>
+              ))}
+            </dl>
           </TabsContent>
-
-          <TabsContent value="security" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Lock className="h-5 w-5" />
-                  {t('docs.security.title')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div>
-                  <h4 className="font-semibold mb-2">🔐 {t('docs.security.data')}</h4>
-                  <p className="text-sm text-muted-foreground">
-                    {t('docs.security.data.desc')}
-                  </p>
-                </div>
-
-                <div>
-                  <h4 className="font-semibold mb-2">🛡️ {t('docs.security.api')}</h4>
-                  <p className="text-sm text-muted-foreground">
-                    {t('docs.security.api.desc')}
-                  </p>
-                </div>
-
-                <div>
-                  <h4 className="font-semibold mb-2">⚡ {t('docs.security.bestPractices')}</h4>
-                  <ul className="text-sm space-y-1">
-                    <li>• Never share your private keys</li>
-                    <li>• Use hardware wallets for large amounts</li>
-                    <li>• Double-check transaction details before signing</li>
-                    <li>• Keep your software updated</li>
-                  </ul>
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="faq" className="space-y-4">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <HelpCircle className="h-5 w-5" />
-                  {t('docs.faq.title')}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div>
-                  <h4 className="font-semibold mb-2">{t('docs.faq.q1')}</h4>
-                  <p className="text-sm text-muted-foreground">
-                    {t('docs.faq.a1')}
-                  </p>
-                </div>
-
-                <div>
-                  <h4 className="font-semibold mb-2">{t('docs.faq.q2')}</h4>
-                  <p className="text-sm text-muted-foreground">
-                    {t('docs.faq.a2')}
-                  </p>
-                </div>
-
-                <div>
-                  <h4 className="font-semibold mb-2">{t('docs.faq.q3')}</h4>
-                  <p className="text-sm text-muted-foreground">
-                    {t('docs.faq.a3')}
-                  </p>
-                </div>
-
-                <div>
-                  <h4 className="font-semibold mb-2">{t('docs.faq.q4')}</h4>
-                  <p className="text-sm text-muted-foreground">
-                    {t('docs.faq.a4')}
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
+          <TabsContent
+            value="data"
+            className="mt-6 space-y-5 text-sm leading-relaxed text-muted-foreground"
+          >
+            <section>
+              <h3 className="mb-2 font-medium text-foreground">
+                Provider availability
+              </h3>
+              <p>
+                Blockchain, market, and news integrations depend on
+                configuration, rate limits, and network access. Some sources
+                require API keys set by the app operator. Missing records or a
+                missing price do not confirm an empty wallet or a worthless
+                asset.
+              </p>
+            </section>
+            <section>
+              <h3 className="mb-2 font-medium text-foreground">
+                Quotes and interpretation
+              </h3>
+              <p>
+                Records may be cached, delayed, or incomplete. USD estimates are
+                not executable trade quotes. Risk scores and sentiment can be
+                wrong; review the source records and supporting evidence.
+              </p>
+            </section>
+            <section>
+              <h3 className="mb-2 font-medium text-foreground">
+                Data requests
+              </h3>
+              <p>
+                Public wallet and token addresses are sent to configured data
+                providers. Preferences and an optionally remembered address are
+                saved in your browser.
+              </p>
+            </section>
+            <Link
+              href="/privacy"
+              className="inline-flex items-center gap-2 text-primary"
+            >
+              Data & privacy
+              <ArrowUpRight className="h-3.5 w-3.5" />
+            </Link>
           </TabsContent>
         </Tabs>
       </DialogContent>

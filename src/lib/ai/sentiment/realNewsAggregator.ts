@@ -3,7 +3,6 @@
  * Fetches news from multiple real APIs and sources
  */
 
-import { apiClient } from '../shared/api';
 import { aiCache, CacheKeys } from '../shared/cache';
 
 export interface RawNewsArticle {
@@ -38,7 +37,7 @@ export interface EnrichedNewsArticle extends RawNewsArticle {
 }
 
 export class RealNewsAggregator {
-  private readonly SOURCE_TRUST_WEIGHTS = {
+  private readonly SOURCE_TRUST_WEIGHTS: Record<string, number> = {
     // Top-tier financial sources
     'wsj.com': 0.95,
     'ft.com': 0.95,
@@ -104,8 +103,8 @@ export class RealNewsAggregator {
       }
     });
 
-    // Remove duplicates and enrich articles
-    const deduplicated = this.deduplicateNews(allArticles);
+    // Remove duplicates and drop items that are not published at a real URL.
+    const deduplicated = this.deduplicateNews(allArticles).filter(article => this.isPublishedUrl(article.url));
     const enriched = await this.enrichArticles(deduplicated);
 
     // Sort by market relevance and recency, then limit to 20 articles for display
@@ -130,8 +129,8 @@ export class RealNewsAggregator {
     try {
       const apiKey = process.env.NEWSAPI_API_KEY || process.env.NEWS_API_KEY;
       if (!apiKey) {
-        console.info('ℹ️ NEWSAPI disabled (no NEWSAPI_API_KEY), using fallback data');
-        return this.generateNewsAPIFallback();
+        console.info('ℹ️ NEWSAPI disabled (no NEWSAPI_API_KEY)');
+        return [];
       }
 
       const pageSize = fast ? 20 : 30;
@@ -281,16 +280,11 @@ export class RealNewsAggregator {
         }
       }
 
-      if (articles.length === 0) {
-        // Fallback to mock data if all endpoints fail
-        articles = this.generateCointelegraphFallback();
-      }
-
       return articles;
 
     } catch (error) {
       console.error('Error fetching from CoinTelegraph:', error);
-      return this.generateCointelegraphFallback();
+      return [];
     }
   }
 
@@ -329,67 +323,12 @@ export class RealNewsAggregator {
     }
   }
 
-  private generateNewsAPIFallback(): RawNewsArticle[] {
-    return [
-      {
-        id: `newsapi_fallback_${Date.now()}_1`,
-        title: 'Federal Reserve Signals Potential Rate Changes Amid Economic Data',
-        source: 'Reuters',
-        url: '#',
-        publishedAt: new Date(Date.now() - 1 * 60 * 60 * 1000).toISOString(),
-        summary: 'Latest economic indicators suggest Federal Reserve may adjust monetary policy in coming months.',
-        category: 'macro'
-      },
-      {
-        id: `newsapi_fallback_${Date.now()}_2`,
-        title: 'Bitcoin ETF Inflows Show Strong Institutional Interest',
-        source: 'Financial Times',
-        url: '#',
-        publishedAt: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
-        summary: 'Recent Bitcoin ETF data shows continued institutional investment despite market volatility.',
-        category: 'market'
-      },
-      {
-        id: `newsapi_fallback_${Date.now()}_3`,
-        title: 'SEC Approves New Cryptocurrency Regulations',
-        source: 'Bloomberg',
-        url: '#',
-        publishedAt: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString(),
-        summary: 'Securities and Exchange Commission announces comprehensive regulatory framework for digital assets.',
-        category: 'regulation'
-      }
-    ];
-  }
-
-  private generateCointelegraphFallback(): RawNewsArticle[] {
-    return [
-      {
-        id: `cointelegraph_fallback_${Date.now()}_1`,
-        title: 'Ethereum Network Upgrade Shows Strong Community Support',
-        source: 'Cointelegraph',
-        url: '#',
-        publishedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-        summary: 'Latest Ethereum network improvements receive positive reception from developers and users alike.',
-        category: 'crypto'
-      },
-      {
-        id: `cointelegraph_fallback_${Date.now()}_2`,
-        title: 'DeFi Protocols Continue Innovation Amid Market Volatility',
-        source: 'Cointelegraph',
-        url: '#',
-        publishedAt: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
-        summary: 'Decentralized finance platforms show resilience and continued development despite market uncertainty.',
-        category: 'crypto'
-      }
-    ];
-  }
-
   private async fetchFromCryptoCompare(): Promise<RawNewsArticle[]> {
     try {
       const apiKey = process.env.CRYPTOCOMPARE_API_KEY;
       if (!apiKey) {
-        console.info('ℹ️ CryptoCompare disabled (no CRYPTOCOMPARE_API_KEY), using fallback data');
-        return this.generateCryptoCompareFallback();
+        console.info('ℹ️ CryptoCompare disabled (no CRYPTOCOMPARE_API_KEY)');
+        return [];
       }
 
       const response = await this.fetchWithTimeout(
@@ -399,8 +338,8 @@ export class RealNewsAggregator {
       );
 
       if (!response.ok) {
-        console.warn('CryptoCompare API returned error, using fallback');
-        return this.generateCryptoCompareFallback();
+        console.warn('CryptoCompare API returned an error');
+        return [];
       }
 
       const data = await response.json();
@@ -419,31 +358,8 @@ export class RealNewsAggregator {
 
     } catch (error) {
       console.error('Error fetching from CryptoCompare:', error);
-      return this.generateCryptoCompareFallback();
+      return [];
     }
-  }
-
-  private generateCryptoCompareFallback(): RawNewsArticle[] {
-    return [
-      {
-        id: `cryptocompare_fallback_${Date.now()}_1`,
-        title: 'Ethereum Price Analysis: Technical Indicators Signal Potential Breakout',
-        source: 'CryptoCompare',
-        url: '#',
-        publishedAt: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(),
-        summary: 'Technical analysis of Ethereum shows promising patterns as market awaits clear direction.',
-        category: 'market'
-      },
-      {
-        id: `cryptocompare_fallback_${Date.now()}_2`,
-        title: 'Bitcoin Mining Difficulty Reaches New High Amid Network Growth',
-        source: 'CryptoCompare',
-        url: '#',
-        publishedAt: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(),
-        summary: 'Bitcoin network fundamentals strengthen as mining difficulty and hash rate continue to rise.',
-        category: 'tech'
-      }
-    ];
   }
 
   private async fetchFromReddit(): Promise<RawNewsArticle[]> {
@@ -491,8 +407,8 @@ export class RealNewsAggregator {
     try {
       const apiKey = process.env.CURRENTS_API_KEY;
       if (!apiKey) {
-        console.info('ℹ️ CurrentsAPI disabled (no CURRENTS_API_KEY), using fallback data');
-        return this.generateCurrentEventsFallback();
+        console.info('ℹ️ CurrentsAPI disabled (no CURRENTS_API_KEY)');
+        return [];
       }
 
       const keywords = 'bitcoin OR ethereum OR cryptocurrency OR blockchain OR "federal reserve"';
@@ -524,32 +440,13 @@ export class RealNewsAggregator {
       }));
 
     } catch (error) {
-      console.warn('CurrentsAPI request failed, using fallback:', error instanceof Error ? error.message : 'Unknown error');
-      return this.generateCurrentEventsFallback();
+      console.warn('CurrentsAPI request failed:', error instanceof Error ? error.message : 'Unknown error');
+      return [];
     }
   }
 
-  private generateCurrentEventsFallback(): RawNewsArticle[] {
-    return [
-      {
-        id: `currents_fallback_${Date.now()}_1`,
-        title: 'Central Banks Worldwide Consider Digital Currency Adoption',
-        source: 'CurrentsAPI',
-        url: '#',
-        publishedAt: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(),
-        summary: 'Global financial institutions explore central bank digital currencies as traditional finance evolves.',
-        category: 'macro'
-      },
-      {
-        id: `currents_fallback_${Date.now()}_2`,
-        title: 'Cryptocurrency Market Shows Signs of Recovery After Recent Downturn',
-        source: 'CurrentsAPI',
-        url: '#',
-        publishedAt: new Date(Date.now() - 7 * 60 * 60 * 1000).toISOString(),
-        summary: 'Digital asset markets demonstrate resilience as investor confidence gradually returns.',
-        category: 'market'
-      }
-    ];
+  private isPublishedUrl(url: string | undefined): boolean {
+    return typeof url === 'string' && /^https?:\/\//i.test(url);
   }
 
   private async fetchWithTimeout(url: string, options: RequestInit = {}, timeoutMs: number = 15000): Promise<Response> {
@@ -560,7 +457,9 @@ export class RealNewsAggregator {
       return resp;
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') {
-        console.warn(`Request timeout after ${timeoutMs}ms for URL: ${url}`);
+        let host = 'unknown';
+        try { host = new URL(url).host; } catch { /* The request target was not a URL. */ }
+        console.warn(`Request timeout after ${timeoutMs}ms for host: ${host}`);
         throw new Error(`Request timeout after ${timeoutMs}ms`);
       }
       throw error;

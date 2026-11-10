@@ -30,7 +30,9 @@ interface ProviderStats {
 }
 
 type DexPairShape = {
-  priceUsd?: number;
+  chainId?: string;
+  pairCreatedAt?: number;
+  priceUsd?: number | string;
   liquidity?: { usd?: number; locked?: boolean };
   age?: { seconds?: number };
   baseToken?: { address?: string };
@@ -304,13 +306,13 @@ async function fetchJSON(url: string, options: RequestInit & {
 export async function fetchDexscreenerToken(address: string) {
   try {
     const data = await fetchJSON(`https://api.dexscreener.com/latest/dex/tokens/${address}`, { provider: 'dexscreener', timeoutMs: 6000 })
-    const pairs: DexPairShape[] = Array.isArray(data?.pairs) ? (data.pairs as DexPairShape[]) : []
+    const pairs: DexPairShape[] = Array.isArray(data?.pairs) ? (data.pairs as DexPairShape[]).filter(pair => pair.chainId === 'ethereum' && pair.baseToken?.address?.toLowerCase() === address.toLowerCase() && Number.isFinite(Number(pair.priceUsd)) && Number(pair.priceUsd) > 0) : []
     if (pairs.length === 0) return null
     const best = pairs.reduce((a, b) => (Number(a?.liquidity?.usd || 0) > Number(b?.liquidity?.usd || 0) ? a : b))
     const price = Number(best?.priceUsd || 0)
     const liqUSD = Number(best?.liquidity?.usd || 0)
-    const ageSeconds = Number(best?.age?.seconds || 0)
-    const pairAgeDays = ageSeconds > 0 ? ageSeconds / 86400 : 0
+    const createdAt = Number(best.pairCreatedAt)
+    const pairAgeDays = Number.isFinite(createdAt) && createdAt > 0 ? Math.max(0, (Date.now() - createdAt) / 86_400_000) : 0
     const lpLocked = Boolean(best?.liquidity?.locked)
     if (price > 0) {
       return {
@@ -330,6 +332,7 @@ export async function fetchDexscreenerToken(address: string) {
 
 // Batch version for multiple tokens
 export async function fetchDexscreenerBatch(addresses: string[]) {
+  addresses = Array.from(new Set(addresses.map(address => address.toLowerCase())));
   if (addresses.length === 0) return {}
   try {
     const data = await fetchJSON(`https://api.dexscreener.com/latest/dex/tokens/${addresses.join(',')}`, { provider: 'dexscreener', timeoutMs: 8000 })
@@ -340,15 +343,11 @@ export async function fetchDexscreenerBatch(addresses: string[]) {
     const tokenPairs: Record<string, DexPairShape[]> = {}
     pairs.forEach((pair: DexPairShape) => {
       const baseToken = pair?.baseToken?.address?.toLowerCase()
-      const quoteToken = pair?.quoteToken?.address?.toLowerCase()
+      if (pair.chainId !== 'ethereum') return;
 
-      if (baseToken && addresses.includes(baseToken)) {
+      if (baseToken && addresses.includes(baseToken) && Number.isFinite(Number(pair.priceUsd)) && Number(pair.priceUsd) > 0) {
         if (!tokenPairs[baseToken]) tokenPairs[baseToken] = []
         tokenPairs[baseToken].push(pair)
-      }
-      if (quoteToken && addresses.includes(quoteToken)) {
-        if (!tokenPairs[quoteToken]) tokenPairs[quoteToken] = []
-        tokenPairs[quoteToken].push(pair)
       }
     })
 

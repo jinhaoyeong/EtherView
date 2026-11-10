@@ -1,157 +1,113 @@
-export type Theme = 'light' | 'dark' | 'system';
+export type Theme = "light" | "dark" | "system";
 
 export class ThemeManager {
   private static instance: ThemeManager;
-  private theme: Theme = 'light';
+  private theme: Theme = "dark";
   private mediaQuery: MediaQueryList | null = null;
-  private listeners: Array<() => void> = [];
+  private listeners = new Set<() => void>();
 
-  private constructor() {
-    if (typeof window !== 'undefined') {
-      this.mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-      this.mediaQuery.addEventListener('change', this.handleSystemThemeChange.bind(this));
-    }
-  }
+  private constructor() {}
 
   public static getInstance(): ThemeManager {
-    if (!ThemeManager.instance) {
-      ThemeManager.instance = new ThemeManager();
-    }
+    if (!ThemeManager.instance) ThemeManager.instance = new ThemeManager();
     return ThemeManager.instance;
   }
 
-  public setTheme(theme: Theme): void {
+  private ensureSystemListener(): void {
+    if (typeof window === "undefined" || this.mediaQuery) return;
+    this.mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    this.mediaQuery.addEventListener("change", this.handleSystemThemeChange);
+  }
+
+  public setTheme(theme: Theme, persist = true): void {
+    const changed = this.theme !== theme;
     this.theme = theme;
+    this.ensureSystemListener();
     this.applyTheme();
-    this.saveThemePreference();
-    this.notifyListeners();
+    try {
+      if (persist) localStorage.setItem("etherview_theme", this.theme);
+    } catch {
+      /* Theme still works without storage. */
+    }
+    if (changed) this.notifyListeners();
   }
 
   public getTheme(): Theme {
     return this.theme;
   }
 
-  public getCurrentTheme(): 'light' | 'dark' {
-    if (this.theme === 'system') {
-      return this.getSystemTheme();
-    }
-    return this.theme;
+  public getCurrentTheme(): "light" | "dark" {
+    return this.theme === "system" ? this.getSystemTheme() : this.theme;
   }
 
-  public getSystemTheme(): 'light' | 'dark' {
-    if (typeof window === 'undefined') return 'dark';
-    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  public getSystemTheme(): "light" | "dark" {
+    if (typeof window === "undefined") return "light";
+    return window.matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light";
   }
 
   private applyTheme(): void {
-    if (typeof document === 'undefined') return;
-
-    const root = document.documentElement;
-    const body = document.body;
-    const currentTheme = this.getCurrentTheme();
-
-    // Remove all theme classes first
-    root.classList.remove('dark', 'light');
-    body.classList.remove('dark-theme');
-
-    if (currentTheme === 'dark') {
-      root.classList.add('dark');
-      body.classList.add('dark-theme');
-      // Use existing theme storage key for compatibility
-      localStorage.setItem('theme', 'dark');
-    } else {
-      root.classList.add('light');
-      localStorage.setItem('theme', 'light');
+    if (typeof document === "undefined") return;
+    const current = this.getCurrentTheme();
+    document.documentElement.classList.remove("dark", "light");
+    document.documentElement.classList.add(current);
+    // Remove the old second dark palette: it used to override the active design tokens.
+    document.body.classList.remove("dark-theme");
+    document.documentElement.style.colorScheme = current;
+    let meta = document.querySelector('meta[name="theme-color"]');
+    if (!meta) {
+      meta = document.createElement("meta");
+      meta.setAttribute("name", "theme-color");
+      document.head.appendChild(meta);
     }
-
-    // Always add current theme class
-    root.classList.add(currentTheme);
-
-    // Update meta theme-color for mobile browsers
-    this.updateMetaThemeColor(currentTheme);
-
-    // Force a repaint to ensure theme is applied immediately
-    void document.documentElement.offsetHeight;
+    meta.setAttribute("content", current === "dark" ? "#101216" : "#f4f6fa");
   }
 
-  private updateMetaThemeColor(theme: 'light' | 'dark'): void {
-    if (typeof document === 'undefined') return;
-
-    let metaThemeColor = document.querySelector('meta[name="theme-color"]');
-    if (!metaThemeColor) {
-      metaThemeColor = document.createElement('meta');
-      metaThemeColor.setAttribute('name', 'theme-color');
-      document.getElementsByTagName('head')[0].appendChild(metaThemeColor);
-    }
-
-    // Use appropriate theme colors for EtherView
-    const themeColors = {
-      light: '#ffffff', // White background for light theme
-      dark: '#0a0a0a'   // Dark background for dark theme
-    };
-
-    metaThemeColor.setAttribute('content', themeColors[theme]);
-  }
-
-  private handleSystemThemeChange(): void {
-    if (this.theme === 'system') {
+  private handleSystemThemeChange = (): void => {
+    if (this.theme === "system") {
       this.applyTheme();
       this.notifyListeners();
     }
-  }
-
-  private saveThemePreference(): void {
-    if (typeof localStorage === 'undefined') return;
-    localStorage.setItem('etherview_theme', this.theme);
-  }
+  };
 
   public loadThemePreference(): void {
-    if (typeof localStorage === 'undefined') return;
-
-    // Check for etherview_theme first (new setting), fall back to theme (old setting)
-    let saved = localStorage.getItem('etherview_theme') as Theme;
-    if (!saved) {
-      const oldTheme = localStorage.getItem('theme');
-      if (oldTheme === 'dark' || oldTheme === 'light') {
-        saved = oldTheme;
-      }
+    let saved: string | null = null;
+    try {
+      saved =
+        localStorage.getItem("etherview_theme") ||
+        localStorage.getItem("theme");
+    } catch {
+      /* Use the default. */
     }
-
-    if (saved && ['light', 'dark', 'system'].includes(saved)) {
-      this.theme = saved;
-    } else {
-      this.theme = 'light'; // Default to light theme
-    }
-
-    // Apply theme immediately and also sync both storage keys
-    this.applyTheme();
-    this.saveThemePreference();
+    this.setTheme(
+      saved === "light" || saved === "dark" || saved === "system"
+        ? saved
+        : "dark",
+      false,
+    );
   }
 
   public toggleTheme(): void {
-    const current = this.getCurrentTheme();
-    this.setTheme(current === 'dark' ? 'light' : 'dark');
+    this.setTheme(this.getCurrentTheme() === "dark" ? "light" : "dark");
   }
-
   public addListener(callback: () => void): void {
-    this.listeners.push(callback);
+    this.listeners.add(callback);
   }
-
   public removeListener(callback: () => void): void {
-    this.listeners = this.listeners.filter(listener => listener !== callback);
+    this.listeners.delete(callback);
   }
-
   private notifyListeners(): void {
-    this.listeners.forEach(listener => listener());
+    this.listeners.forEach((listener) => listener());
   }
 
   public cleanup(): void {
-    if (this.mediaQuery) {
-      this.mediaQuery.removeEventListener('change', this.handleSystemThemeChange.bind(this));
-    }
-    this.listeners = [];
+    this.mediaQuery?.removeEventListener(
+      "change",
+      this.handleSystemThemeChange,
+    );
+    this.mediaQuery = null;
   }
 }
 
-// Export singleton instance
 export const themeManager = ThemeManager.getInstance();

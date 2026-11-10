@@ -1,13 +1,13 @@
 # EtherView
 
-AI‑powered Ethereum wallet dashboard with wallet overview, transactions, whale tracking, scam detection, and news sentiment. Built with Next.js App Router and TypeScript.
+A read-only Ethereum intelligence workspace for public-wallet exploration, asset positions, transactions, large transfers, token risk indicators, and news sentiment. Built with Next.js App Router and TypeScript.
 
 ## Features
 
-- Wallet overview with portfolio, token details, and USD conversions
+- Wallet overview with observed portfolio value, allocation, asset search, token details, and USD estimates
 - Transactions view with fees and recent activity
-- Whale movements page for large wallet insights
-- Scam detection with honeypot simulation and heuristics
+- Wallet-relative whale movements from large transfers in available history
+- Token risk screening with evidence and heuristics; sell simulation is explicitly unavailable
 - News sentiment analysis with GLM/OpenAI fallback and local heuristics
 - Category normalization: Macroeconomic, Geopolitical, Regulation, Technology, Social, Market
 - Multi‑sentence article insights for readability
@@ -16,10 +16,10 @@ AI‑powered Ethereum wallet dashboard with wallet overview, transactions, whale
 
 ## Getting Started
 
-- Prerequisites: Node.js 18+, npm 9+
+- Prerequisites: a currently supported Node.js LTS release and npm (included with Node.js).
 - Install:
   ```bash
-  npm install
+  npm ci
   ```
 - Run:
   ```bash
@@ -29,7 +29,11 @@ AI‑powered Ethereum wallet dashboard with wallet overview, transactions, whale
 
 ## Environment
 
-Configure in `.env.local` (as available):
+Copy `.env.example` to `.env.local` and fill only the providers you use. Restart the development server after changes. Never put real secrets in committed files.
+
+`ETHERSCAN_API_KEY` is optional for transaction history. Without it, or when Etherscan is unavailable, the server uses public Blockscout history (up to 300 recent records per feed). Public providers may be rate-limited, delayed, or incomplete. Missing data is shown as unavailable; no real sell-simulation provider is configured.
+
+Optional sources:
 - `OPENAI_API_KEY`, `GLM_API_KEY`, `GLM_BASE_URL`
 - `NEXT_PUBLIC_NEWS_API_KEY` or `NEWSAPI_API_KEY`
 - `COINGECKO_API_KEY`, `CRYPTOCOMPARE_API_KEY`, `CURRENTS_API_KEY`
@@ -41,7 +45,8 @@ Configure in `.env.local` (as available):
 - `npm run dev` — start development server
 - `npm run build` — build production assets
 - `npm run start` — run production server
-- `npm run lint` — run ESLint
+- `npm run lint` — run ESLint (legacy provider/library lint debt remains; see `REVIEW.md`)
+- `npm test` — backend correctness and request-validation regression tests
 - `npm run typecheck` — TypeScript type checking only
 
 ## Pages
@@ -103,5 +108,30 @@ Configure in `.env.local` (as available):
 
 - Type safety: run `npm run typecheck`
 - Linting: run `npm run lint`
-- Deployment: `vercel.json`, `next.config.ts` are present; Vercel‑friendly
+- Deployment: Cloudflare Workers with vinext; the original Next.js commands remain available.
 - Security: do not commit secrets; configure `.env.local`
+
+## Redesign and code review
+
+See [REVIEW.md](REVIEW.md) for the new information architecture, correctness/security fixes, verification, and remaining provider limitations. Valuations are estimates in USD. Recognized contracts are not safety guarantees; sentiment is not a price forecast. The active whale view analyzes the selected wallet, not a global whale feed.
+
+## Cloudflare deployment
+
+Live app: [etherview.yeongjinhao09.workers.dev](https://etherview.yeongjinhao09.workers.dev).
+
+`cloudflare.config.ts` defines the `etherview` Worker and static asset routing. `vite.config.ts` builds the existing Next.js routes with vinext so the server API routes run on Cloudflare alongside the responsive frontend.
+
+```bash
+npm run typecheck
+npm test
+npm run build:vinext
+npm run deploy:vinext
+```
+
+For CLI deployments, authenticate once with `npx cf auth login`. The initial deployment used the connected Cloudflare account. Local Next.js development still uses `npm run dev`; Cloudflare development uses `npm run dev:vinext`.
+
+Optional provider keys from `.env.example` belong in the Worker's runtime secrets in the Cloudflare dashboard. Public RPC, pricing, and bounded transaction-history fallbacks work without those keys. News availability depends on a configured provider.
+
+When the public explorer rate-limits the hosting provider, browser history lookups retry directly against Blockscout using the same validated, bounded pagination. This fallback sends only the public address and never includes provider credentials.
+
+Next.js and vinext generate different route validator types in `.next/types`. The shared type check excludes the Next.js generated validator and Cloudflare's generated browser-global declarations; the app remains strictly type checked. `next build` performs its own route validation.

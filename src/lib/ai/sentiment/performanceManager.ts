@@ -3,7 +3,7 @@
  * Provides intelligent caching, rate limiting, and performance optimization
  */
 
-import { aiCache, CacheKeys } from '../shared/cache';
+import { aiCache } from '../shared/cache';
 
 interface PerformanceMetrics {
   totalRequests: number;
@@ -29,11 +29,12 @@ interface ServiceHealth {
 }
 
 export class PerformanceManager {
+  private inflight = new Map<string, Promise<unknown>>();
   private metrics: Map<string, PerformanceMetrics> = new Map();
   private rateLimits: Map<string, RateLimitInfo> = new Map();
   private serviceHealth: Map<string, ServiceHealth> = new Map();
 
-  private readonly DEFAULT_CACHE_TTL = 1 * 1000; // 1 second - effectively disable cache
+  private readonly DEFAULT_CACHE_TTL = 5 * 60 * 1000;
   private readonly RATE_LIMIT_WINDOW = 15 * 60 * 1000; // 15 minutes
   private readonly MAX_REQUESTS_PER_WINDOW = 100;
   private readonly CIRCUIT_BREAKER_THRESHOLD = 5; // Failures before circuit breaker
@@ -46,52 +47,39 @@ export class PerformanceManager {
     forceRefresh: boolean = false
   ): Promise<T> {
     const startTime = performance.now();
-
-    try {
-      // Check cache first unless force refresh
-      if (!forceRefresh) {
-        const cached = aiCache.get<T>(key);
-        if (cached) {
-          this.recordMetrics(key, true, performance.now() - startTime);
-          return cached;
-        }
+    if (!forceRefresh) {
+      const cached = aiCache.get<T>(key);
+      if (cached !== null) {
+        this.recordMetrics(key, true, performance.now() - startTime);
+        return cached;
       }
-
-      // Check if service is healthy and not rate limited
-      if (!await this.canExecute(key)) {
-        // Try to return stale cache if available
-        const stale = aiCache.get<T>(key);
-        if (stale) {
-          console.warn(`Service ${key} rate limited, returning stale cache`);
-          return stale;
-        }
-        throw new Error(`Service ${key} is rate limited or unhealthy`);
-      }
-
-      // Execute the function
-      const result = await fn();
-
-      // Cache the result
-      aiCache.set(key, result, cacheTTL);
-
-      // Record success metrics
-      this.recordSuccess(key, performance.now() - startTime);
-
-      return result;
-
-    } catch (error) {
-      // Record failure metrics
-      this.recordFailure(key, error as Error, performance.now() - startTime);
-
-      // Try to return stale cache as fallback
-      const stale = aiCache.get<T>(key);
-      if (stale) {
-        console.warn(`Service ${key} failed, returning stale cache as fallback`);
-        return stale;
-      }
-
-      throw error;
     }
+    const existing = this.inflight.get(key);
+    if (existing) return existing as Promise<T>;
+
+    // Register before execution begins so simultaneous page loads and manual
+    // refreshes share a single analysis/provider request.
+    const task = Promise.resolve().then(async () => {
+      try {
+        if (!await this.canExecute(key)) {
+          const cached = aiCache.get<T>(key);
+          if (cached !== null) return cached;
+          throw new Error(`Service ${key} is rate limited or unhealthy`);
+        }
+        const result = await fn();
+        aiCache.set(key, result, cacheTTL);
+        this.recordSuccess(key, performance.now() - startTime);
+        return result;
+      } catch (error) {
+        this.recordFailure(key, error instanceof Error ? error : new Error('Service unavailable'), performance.now() - startTime);
+        const cached = aiCache.get<T>(key);
+        if (cached !== null) return cached;
+        throw error;
+      }
+    });
+    this.inflight.set(key, task);
+    try { return await task; }
+    finally { if (this.inflight.get(key) === task) this.inflight.delete(key); }
   }
 
   private async canExecute(serviceKey: string): Promise<boolean> {
@@ -277,41 +265,21 @@ export class PerformanceManager {
     } = options;
 
     const results: R[] = [];
-
-    // Process in batches with controlled concurrency
-    for (let i = 0; i < items.length; i += batchSize) {
-      const batch = items.slice(i, i + batchSize);
-
-      // Process batch items with concurrency control
-      const batchPromises = batch.map(async (item, batchIndex) => {
-        const globalIndex = i + batchIndex;
-        const key = cacheKey(item, globalIndex);
-
-        return this.executeWithCaching(
-          key,
-          () => processor(item, globalIndex),
-          cacheTTL,
-          forceRefresh
-        );
-      });
-
-      // Wait for current batch to complete
-      const batchResults = await Promise.allSettled(batchPromises);
-
-      // Extract successful results
-      batchResults.forEach(result => {
-        if (result.status === 'fulfilled') {
-          results.push(result.value);
-        } else {
-          console.error('Batch item failed:', result.reason);
-          // Could add placeholder or skip based on requirements
-        }
-      });
-
-      // Delay between batches to avoid rate limiting
-      if (i + batchSize < items.length && delayBetweenBatches > 0) {
-        await new Promise(resolve => setTimeout(resolve, delayBetweenBatches));
+    const safeBatchSize = Math.max(1, Math.floor(batchSize) || 1);
+    const safeConcurrency = Math.max(1, Math.floor(concurrency) || 1);
+    for (let i = 0; i < items.length; i += safeBatchSize) {
+      const batch = items.slice(i, i + safeBatchSize);
+      for (let j = 0; j < batch.length; j += safeConcurrency) {
+        const group = batch.slice(j, j + safeConcurrency);
+        // Preserve every source index. Skipping rejected entries would attach
+        // later sentiment results to the wrong article.
+        const completed = await Promise.all(group.map((item, groupIndex) => {
+          const index = i + j + groupIndex;
+          return this.executeWithCaching(cacheKey(item, index), () => processor(item, index), cacheTTL, forceRefresh);
+        }));
+        results.push(...completed);
       }
+      if (i + safeBatchSize < items.length && delayBetweenBatches > 0) await new Promise(resolve => setTimeout(resolve, delayBetweenBatches));
     }
 
     return results;

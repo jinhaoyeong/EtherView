@@ -15,7 +15,7 @@ export async function applyRules(features: TokenFeatures, _token?: TokenInfo): P
 
   if (!features.contractVerified) {
     score += 15
-    reasons.push('Unverified contract')
+    reasons.push('Contract is not in the known-address registry')
   }
   if (features.hasURLInName) {
     score += 25
@@ -52,7 +52,7 @@ export async function applyRules(features: TokenFeatures, _token?: TokenInfo): P
   }
   if (features.externalListings === 0) {
     score += 10
-    reasons.push('No external listings')
+    reasons.push('Price coverage unavailable')
   }
 
   return {

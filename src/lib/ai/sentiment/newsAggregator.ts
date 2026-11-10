@@ -39,7 +39,7 @@ export interface EnrichedNewsArticle extends RawNewsArticle {
 
 
 export class NewsAggregator {
-  private readonly SOURCE_TRUST_WEIGHTS = {
+  private readonly SOURCE_TRUST_WEIGHTS: Record<string, number> = {
     // Top-tier financial sources
     'wsj.com': 0.95,
     'ft.com': 0.95,
@@ -191,7 +191,7 @@ export class NewsAggregator {
     const selectedQueries = fast ? queries : queries;
     const tasks = selectedQueries.map(query => (async () => {
       const url = `https://newsapi.org/v2/everything?q=${encodeURIComponent(query)}&sortBy=publishedAt&language=en&pageSize=20&apiKey=${apiKey}`;
-      const response = await apiClient.fetch(url, {
+      const response = await apiClient.fetch<{ articles?: unknown[]; results?: unknown[] }>(url, {
         cacheKey: `newsapi:${query.substring(0, 20)}`,
         cacheTTL: 10 * 60 * 1000,
         timeoutMs: 7000
@@ -231,7 +231,7 @@ export class NewsAggregator {
     try {
       const url = 'https://cryptopanic.com/api/v1/posts/?auth_token=free&filter=rated&public=true';
 
-      const response = await apiClient.fetch(url, {
+      const response = await apiClient.fetch<{ articles?: unknown[]; results?: unknown[] }>(url, {
         cacheKey: 'cryptopanic:posts',
         cacheTTL: 5 * 60 * 1000
       });

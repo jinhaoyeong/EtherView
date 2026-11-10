@@ -1,3 +1,4 @@
+import { isEthereumAddress } from '@/lib/api/request-validation'
 import { NextRequest, NextResponse } from 'next/server'
 
 const cache = new Map<string, { data: unknown; ts: number }>()
@@ -8,9 +9,11 @@ export async function GET(request: NextRequest) {
   const addr = searchParams.get('addr') || ''
   const chainid = searchParams.get('chainid') || '1'
 
-  if (!addr) {
-    return NextResponse.json({ error: 'Missing addr' }, { status: 400 })
+  if (!isEthereumAddress(addr)) {
+    return NextResponse.json({ error: 'Invalid Ethereum address' }, { status: 400 })
   }
+
+  if (chainid !== '1') return NextResponse.json({ error: 'Only Ethereum mainnet is supported' }, { status: 400 })
 
   const key = `covalent_${chainid}_${addr}`
   const cached = cache.get(key)
@@ -52,7 +55,7 @@ export async function GET(request: NextRequest) {
     }
 
     if (!res.ok) {
-      return NextResponse.json({ tokens: [] })
+      return NextResponse.json({ error: 'Token provider is unavailable', code: 'PROVIDER_UNAVAILABLE' }, { status: 503 })
     }
 
     const json = await res.json()
@@ -62,6 +65,6 @@ export async function GET(request: NextRequest) {
     cache.set(key, { data, ts: Date.now() })
     return NextResponse.json(data)
   } catch {
-    return NextResponse.json({ tokens: [] })
+    return NextResponse.json({ error: 'Token provider is unavailable', code: 'PROVIDER_UNAVAILABLE' }, { status: 503 })
   }
 }

@@ -1,3 +1,4 @@
+import { isEthereumAddress } from '@/lib/api/request-validation'
 import { NextRequest, NextResponse } from 'next/server'
 export const runtime = 'nodejs'
 import { WHITELIST_MAINNET } from '@/lib/config/tokenWhitelist'
@@ -8,6 +9,8 @@ type ProviderHealth = { cooldownUntil: number }
 const health: Record<string, ProviderHealth> = {}
 const wlCache: Map<string, { usd: number; source: string; ts: number; confidence: number }> = new Map()
 const tokenCache: Map<string, { usd: number; source: string; ts: number; confidence: number }> = new Map()
+let ethQuote: { usd: number; source: string; timestamp: number } | null = null
+let ethRequest: Promise<{ usd: number; source: string } | null> | null = null
 
 function inCooldown(provider: string) {
   const h = health[provider]
@@ -44,7 +47,7 @@ async function coinbaseSpot(symbol: string) {
   if (!res.ok) throw new Error(`coinbase ${res.status}`)
   const data = await res.json()
   const amount = parseFloat(data?.data?.amount)
-  if (!isNaN(amount) && amount > 0) return { usd: amount, source: 'coinbase' }
+  if (Number.isFinite(amount) && amount > 0) return { usd: amount, source: 'coinbase' }
   throw new Error('coinbase invalid')
 }
 
@@ -56,7 +59,7 @@ async function cryptocompareSpot(symbol: string) {
   if (!res.ok) throw new Error(`cryptocompare ${res.status}`)
   const data = await res.json()
   const usd = data?.USD
-  if (typeof usd === 'number' && usd > 0) return { usd, source: 'cryptocompare' }
+  if (typeof usd === 'number' && Number.isFinite(usd) && usd > 0) return { usd, source: 'cryptocompare' }
   throw new Error('cryptocompare invalid')
 }
 
@@ -120,7 +123,8 @@ export async function GET(req: NextRequest) {
     
     if (type === 'whitelist') {
       const symbolsParam = url.searchParams.get('symbols') || ''
-      const symbols = symbolsParam.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)
+      const symbols = Array.from(new Set(symbolsParam.split(',').map(s => s.trim().toUpperCase()).filter(Boolean)))
+      if (symbols.length > 50 || symbols.some(s => !/^[A-Z0-9.-]{1,15}$/.test(s))) return NextResponse.json({ error: 'Invalid symbols or more than 50 symbols' }, { status: 400 })
       if (symbols.length === 0) return NextResponse.json({}, { status: 200 })
       const out: Record<string, { usd: number; source: string; confidence: number }> = {}
       const now = Date.now()
@@ -151,9 +155,6 @@ export async function GET(req: NextRequest) {
           if (!filled && !inCooldown('coinbase')) {
             try { filled = await coinbaseSpot(s) } catch {}
           }
-          if (!filled && ['USDC','USDT','DAI'].includes(s)) {
-            filled = { usd: 1, source: 'fixed' }
-          }
           if (filled && filled.usd > 0) {
             wlCache.set(s, { usd: filled.usd, source: filled.source, ts: now, confidence: 0.7 })
             out[s] = { usd: filled.usd, source: filled.source, confidence: 0.7 }
@@ -166,7 +167,8 @@ export async function GET(req: NextRequest) {
       const budgetStart = Date.now()
       const BUDGET_MS = 12000
       const addressesParam = url.searchParams.get('addresses') || ''
-      const addresses = addressesParam.split(',').map(s => s.trim()).filter(Boolean)
+      const addresses = Array.from(new Set(addressesParam.split(',').map(s => s.trim().toLowerCase()).filter(Boolean)))
+      if (addresses.length > 100 || addresses.some(a => !isEthereumAddress(a))) return NextResponse.json({ error: 'Invalid Ethereum addresses or more than 100 addresses' }, { status: 400 })
       if (addresses.length === 0) return NextResponse.json({}, { status: 200 })
 
       const result: Record<string, { usd: number; source: string; confidence?: number }> = {}
@@ -192,6 +194,7 @@ export async function GET(req: NextRequest) {
       }
 
       // Provider rotation strategy with adaptive cooldowns
+      let dexAttempted = false
       const providerOrder = [
         { name: 'coingecko', fn: () => coingeckoTokenBatch(fresh) },
         { name: 'cmc', fn: () => fetchFromCMC(fresh) },
@@ -199,6 +202,7 @@ export async function GET(req: NextRequest) {
       ]
 
   for (const provider of providerOrder) {
+    if (Date.now() - budgetStart >= BUDGET_MS) break
     if (inCooldown(provider.name)) {
       console.log(`⏳ Skipping ${provider.name} - in cooldown`)
       continue
@@ -210,6 +214,7 @@ export async function GET(req: NextRequest) {
 
         try {
           console.log(`🔄 Trying ${provider.name} for ${addresses.length} addresses`)
+          if (provider.name === 'dexscreener') dexAttempted = true
           const providerResult = await provider.fn()
 
           // Merge results, preferring higher confidence values
@@ -235,7 +240,7 @@ export async function GET(req: NextRequest) {
       }
         } catch (error: unknown) {
           const message = error instanceof Error ? error.message : 'unknown error'
-          console.error(`❌ ${provider.name} failed:`, message)
+          console.warn(`Pricing provider ${provider.name} unavailable`)
           // Adaptive cooldown based on error type
           const cooldownSeconds = typeof message === 'string' && message.includes('rate limit') ? 30 : 15
           setCooldown(provider.name, cooldownSeconds)
@@ -246,7 +251,7 @@ export async function GET(req: NextRequest) {
       const missing = fresh.filter(a => !result[a.toLowerCase()])
       if (missing.length > 0) {
         // Respect time budget to avoid long waits
-        if (Date.now() - budgetStart < BUDGET_MS && !dexscreenerProvider.isBlocked()) {
+        if (!dexAttempted && Date.now() - budgetStart < BUDGET_MS && !dexscreenerProvider.isBlocked()) {
           console.log(`🔍 Filling ${missing.length} missing tokens with Dexscreener batch call`)
           try {
             const dexPrices = await dexscreenerProvider.getBatchTokenPrices(missing)
@@ -260,7 +265,7 @@ export async function GET(req: NextRequest) {
               }
             })
           } catch (error) {
-            console.error(`❌ Dexscreener batch failed:`, error)
+            console.warn('DEX pricing temporarily unavailable'); void error
           }
         } else {
           console.log('⏳ Skipping Dexscreener batch')
@@ -274,6 +279,7 @@ export async function GET(req: NextRequest) {
         return !r || !(typeof r.usd === 'number' && r.usd > 0)
       })
       for (const addr of stillMissing) {
+        if (Date.now() - budgetStart >= BUDGET_MS) break
         const meta = WHITELIST_MAINNET[addr.toLowerCase()]
         if (!meta) continue
 
@@ -288,10 +294,6 @@ export async function GET(req: NextRequest) {
           try { filled = await coinbaseSpot(symbol) } catch {}
         }
 
-        // Stablecoin fallback
-        if (!filled && typeof meta.fixedUSD === 'number') {
-          filled = { usd: meta.fixedUSD, source: 'fixed' }
-        }
 
         if (filled && filled.usd > 0) {
           result[addr.toLowerCase()] = {
@@ -323,9 +325,7 @@ export async function GET(req: NextRequest) {
               const ref = q.price
               if (typeof price === 'number' && price > 0 && typeof ref === 'number' && ref > 0) {
                 const ratio = price > ref ? price / ref : ref / price
-                const isStable = typeof meta.fixedUSD === 'number'
-                const needsFix = (!isStable && (ratio > 10 || price > 1000))
-                if (needsFix) {
+                if (ratio > 10) {
                   result[key] = { usd: ref, source: 'cmc', confidence: q.confidence }
                 }
               }
@@ -353,18 +353,25 @@ export async function GET(req: NextRequest) {
     }
 
     if (type === 'eth') {
-      // Hedged race for ETH
-      const tasks: Array<Promise<{ usd: number; source: string }>> = []
-      if (!inCooldown('coinbase')) tasks.push(coinbaseSpot('ETH'))
-      if (!inCooldown('cryptocompare')) tasks.push(cryptocompareSpot('ETH'))
-      let first: { usd: number; source: string } | null = null
-      try { first = await Promise.any(tasks) } catch {}
-      if (first) {
-        return NextResponse.json({ ethereum: { usd: first.usd, source: first.source } })
+      if (ethQuote && Date.now() - ethQuote.timestamp < 30_000) {
+        return NextResponse.json({ ethereum: { usd: ethQuote.usd, source: ethQuote.source } }, { headers: { 'Cache-Control': 'no-store' } })
       }
-      // If none succeeded, set cooldown briefly
-      setCooldown('coinbase', 15); setCooldown('cryptocompare', 15)
-      return NextResponse.json({ ethereum: { usd: 0, source: 'unavailable' } })
+      if (!ethRequest) {
+        const tasks: Array<Promise<{ usd: number; source: string }>> = []
+        if (!inCooldown('coinbase')) tasks.push(coinbaseSpot('ETH'))
+        if (!inCooldown('cryptocompare')) tasks.push(cryptocompareSpot('ETH'))
+        const pending = Promise.any(tasks).then(quote => {
+          ethQuote = { ...quote, timestamp: Date.now() }
+          return quote
+        }).catch(() => {
+          setCooldown('coinbase', 15); setCooldown('cryptocompare', 15)
+          return null
+        })
+        ethRequest = pending
+        void pending.finally(() => { if (ethRequest === pending) ethRequest = null })
+      }
+      const quote = await ethRequest
+      return NextResponse.json({ ethereum: quote ?? { usd: 0, source: 'unavailable' } }, { headers: { 'Cache-Control': 'no-store' } })
     }
     return NextResponse.json({}, { status: 400 })
   } catch (e: unknown) {

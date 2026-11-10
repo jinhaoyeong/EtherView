@@ -3,7 +3,7 @@
  * Aggregates real social signals from Twitter, Reddit, and other platforms
  */
 
-import { SentimentAnalysis } from './realSentimentAnalyzer';
+import { SentimentAnalysis } from './sentimentAnalyzer';
 import { SocialSentimentSummary } from './types';
 
 export interface SocialPost {
@@ -282,7 +282,7 @@ export class RealSocialAggregator {
             })),
             influenceScore: Math.log10(data.data.subscribers || 1) * (totalEngagement / 1000),
             engagementRate: totalEngagement / (data.data.subscribers || 1),
-            category: subreddit.category
+            category: subreddit.category === 'social' ? 'media' : subreddit.category
           });
         }
       } catch (error) {

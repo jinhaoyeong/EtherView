@@ -1,109 +1,107 @@
 "use client";
 
+import Link from "next/link";
+import { ArrowUpRight } from "lucide-react";
+import { ResearchHeader } from "@/components/shared/research-header";
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
 import { useWallet } from "@/contexts/wallet-context";
-import { Card } from "@/components/ui/card";
-import { Shield, Eye, Database, UserCheck } from "lucide-react";
-import { useTranslation } from "@/hooks/use-translation";
+
+const sections = [
+  {
+    number: "01",
+    title: "Public address lookups",
+    paragraphs: [
+      "EtherView uses public Ethereum addresses to retrieve balances, token positions, transfers, and related analysis. It does not request a wallet signature, private key, or seed phrase.",
+      "Blockchain records are public, but looking up an address may reveal information about your interests. Viewing an address does not establish that you own it.",
+    ],
+  },
+  {
+    number: "02",
+    title: "External data providers",
+    paragraphs: [
+      "Wallet and token addresses are included in requests to configured RPC, explorer, portfolio, and market data providers. Depending on the integration, requests pass through the app’s server or go directly to a provider.",
+      "News and analysis features request content and send analysis inputs to configured services. Providers and the hosting environment may receive ordinary request metadata. Their processing and retention depend on their own policies and configuration.",
+    ],
+  },
+  {
+    number: "03",
+    title: "Browser storage and caches",
+    paragraphs: [
+      "Preferences such as theme, language, display options, and refresh behavior are saved in this browser. If “Remember wallet address” is enabled, the last viewed public address is saved on this device.",
+      "The app caches data to reduce repeated requests. Some caches live in memory or server processes. Clearing browser data does not erase blockchain records or data held by external providers.",
+    ],
+  },
+  {
+    number: "04",
+    title: "Local data controls",
+    paragraphs: [
+      "Settings → Privacy & storage lets you disable address remembrance, clear saved EtherView cache entries, export preferences, or remove EtherView’s saved local data.",
+      "Removing EtherView data resets its saved preferences and address. It does not remove unrelated browser storage. You can also manage site data through your browser’s settings.",
+    ],
+  },
+];
 
 export default function PrivacyPage() {
   const { walletAddress, handleDisconnect } = useWallet();
-  const { t } = useTranslation();
-
   return (
-    <DashboardLayout walletAddress={walletAddress || ''} onDisconnect={handleDisconnect}>
-      <div className="space-y-6">
-        <div className="flex items-center gap-3">
-          <Shield className="h-6 w-6 text-primary" />
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">{t('privacy.title')}</h1>
-            <p className="text-sm text-muted-foreground">{t('privacy.subtitle')}</p>
-          </div>
-        </div>
-
-        <div className="grid gap-6">
-          <Card className="bg-card border-border p-6 shadow-lg">
-            <div className="flex items-center gap-3 mb-4">
-              <Eye className="h-5 w-5 text-primary" />
-              <h3 className="text-lg font-semibold">{t('privacy.collection.title')}</h3>
-            </div>
-            <div className="space-y-3 text-sm text-muted-foreground">
-              <p>
-                {t('privacy.collection.desc')}
+    <DashboardLayout
+      walletAddress={walletAddress || ""}
+      onDisconnect={handleDisconnect}
+    >
+      <div className="workspace-page research-page space-y-8">
+        <ResearchHeader
+          index="07"
+          category="Built on transparency"
+          title="Data & privacy"
+          description="Your keys stay yours. Here’s what EtherView reads, what it remembers, and what you control."
+          tone="lilac"
+        />
+        <div className="privacy-composition">
+          <article className="privacy-chapters">
+            {sections.map(({ number, title, paragraphs }) => (
+              <section
+                key={number}
+                className="privacy-chapter"
+              >
+                <span className="privacy-chapter-index">
+                  {number}
+                </span>
+                <div>
+                  <h2 className="text-base font-semibold tracking-tight">
+                    {title}
+                  </h2>
+                  <div className="mt-4 space-y-3 text-sm leading-7 text-muted-foreground">
+                    {paragraphs.map((text) => (
+                      <p key={text}>{text}</p>
+                    ))}
+                  </div>
+                </div>
+              </section>
+            ))}
+          </article>
+          <aside className="space-y-4 text-sm">
+            <section className="surface-panel p-5">
+              <h2 className="mb-2 font-medium">Public addresses only</h2>
+              <p className="leading-relaxed text-muted-foreground">
+                A private key or seed phrase is never needed to look up an
+                address.
               </p>
-              <ul className="list-disc list-inside space-y-2 ml-4">
-                <li>{t('privacy.collection.item1')}</li>
-                <li>{t('privacy.collection.item2')}</li>
-                <li>{t('privacy.collection.item3')}</li>
-              </ul>
-            </div>
-          </Card>
-
-          <Card className="bg-card border-border p-6 shadow-lg">
-            <div className="flex items-center gap-3 mb-4">
-              <Database className="h-5 w-5 text-primary" />
-              <h3 className="text-lg font-semibold">{t('privacy.storage.title')}</h3>
-            </div>
-            <div className="space-y-3 text-sm text-muted-foreground">
-              <p>
-                {t('privacy.storage.desc')}
+            </section>
+            <section className="surface-panel p-5">
+              <h2 className="mb-2 font-medium">Browser preferences</h2>
+              <p className="mb-4 leading-relaxed text-muted-foreground">
+                Manage remembered addresses, saved preferences, and cache
+                entries.
               </p>
-              <ul className="list-disc list-inside space-y-2 ml-4">
-                <li>{t('privacy.storage.item1')}</li>
-                <li>{t('privacy.storage.item2')}</li>
-                <li>{t('privacy.storage.item3')}</li>
-                <li>{t('privacy.storage.item4')}</li>
-              </ul>
-            </div>
-          </Card>
-
-          <Card className="bg-card border-border p-6 shadow-lg">
-            <div className="flex items-center gap-3 mb-4">
-              <UserCheck className="h-5 w-5 text-primary" />
-              <h3 className="text-lg font-semibold">{t('privacy.rights.title')}</h3>
-            </div>
-            <div className="space-y-3 text-sm text-muted-foreground">
-              <p>
-                {t('privacy.rights.desc')}
-              </p>
-              <ul className="list-disc list-inside space-y-2 ml-4">
-                <li>{t('privacy.rights.item1')}</li>
-                <li>{t('privacy.rights.item2')}</li>
-                <li>{t('privacy.rights.item3')}</li>
-                <li>{t('privacy.rights.item4')}</li>
-              </ul>
-            </div>
-          </Card>
-
-          <Card className="bg-card border-border p-6 shadow-lg">
-            <h3 className="text-lg font-semibold mb-4">{t('privacy.thirdparty.title')}</h3>
-            <div className="space-y-3 text-sm text-muted-foreground">
-              <p>
-                {t('privacy.thirdparty.desc')}
-              </p>
-              <ul className="list-disc list-inside space-y-2 ml-4">
-                <li>{t('privacy.thirdparty.item1')}</li>
-                <li>{t('privacy.thirdparty.item2')}</li>
-                <li>{t('privacy.thirdparty.item3')}</li>
-              </ul>
-              <p className="mt-4">
-                {t('privacy.thirdparty.footer')}
-              </p>
-            </div>
-          </Card>
-
-          <Card className="bg-card border-border p-6 shadow-lg">
-            <h3 className="text-lg font-semibold mb-4">{t('privacy.contact.title')}</h3>
-            <div className="space-y-3 text-sm text-muted-foreground">
-              <p>
-                {t('privacy.contact.desc')}
-              </p>
-              <div className="space-y-2">
-                <p><strong>Email:</strong> privacy@etherview.io</p>
-                <p><strong>GitHub:</strong> github.com/etherview</p>
-              </div>
-            </div>
-          </Card>
+              <Link
+                href="/settings"
+                className="inline-flex items-center gap-2 text-primary"
+              >
+                Open settings
+                <ArrowUpRight className="h-3.5 w-3.5" />
+              </Link>
+            </section>
+          </aside>
         </div>
       </div>
     </DashboardLayout>

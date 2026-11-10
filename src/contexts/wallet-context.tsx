@@ -1,73 +1,88 @@
 "use client";
+import {
+  createContext,
+  useContext,
+  useState,
+  useEffect,
+  ReactNode,
+  useCallback,
+} from "react";
+import { useRouter } from "next/navigation";
+import { getAddress, isAddress } from "ethers";
 
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { useRouter } from 'next/navigation';
-
-interface WalletContextType {
+type WalletContextType = {
   walletAddress: string | null;
   setWalletAddress: (address: string | null) => void;
   handleDisconnect: () => void;
   isConnected: boolean;
-}
-
+  hydrated: boolean;
+};
 const WalletContext = createContext<WalletContextType | undefined>(undefined);
-
-interface WalletProviderProps {
-  children: ReactNode;
+function rememberWallet() {
+  try {
+    return (
+      JSON.parse(localStorage.getItem("etherview_settings") || "{}").storage
+        ?.rememberWalletAddress !== false
+    );
+  } catch {
+    return true;
+  }
 }
-
-export function WalletProvider({ children }: WalletProviderProps) {
-  const [walletAddress, setWalletAddress] = useState<string | null>(null);
+export function WalletProvider({ children }: { children: ReactNode }) {
+  const [walletAddress, setAddress] = useState<string | null>(null);
+  const [hydrated, setHydrated] = useState(false);
   const router = useRouter();
-
-  // Load wallet from localStorage on mount
   useEffect(() => {
-    const stored = localStorage.getItem("etherview_wallet");
-    console.log('💳 WalletContext - Loading from localStorage:', stored);
-    if (stored) {
-      setWalletAddress(stored);
-      console.log('💳 WalletContext - Set wallet address:', stored);
+    try {
+      const stored = localStorage.getItem("etherview_wallet");
+      if (rememberWallet() && stored && isAddress(stored))
+        setAddress(getAddress(stored));
+      else localStorage.removeItem("etherview_wallet");
+    } catch {
+      /* Storage is optional in private browsing. */
     }
+    setHydrated(true);
+    const syncPreference = () => {
+      try {
+        if (!rememberWallet()) localStorage.removeItem("etherview_wallet");
+      } catch {}
+    };
+    window.addEventListener("etherview:settings-changed", syncPreference);
+    return () =>
+      window.removeEventListener("etherview:settings-changed", syncPreference);
   }, []);
-
-  const handleSetWalletAddress = (address: string | null) => {
-    console.log('💳 WalletContext - Setting wallet address:', address);
-    setWalletAddress(address);
-    if (address) {
-      localStorage.setItem("etherview_wallet", address);
-      console.log('💳 WalletContext - Saved to localStorage:', address);
-    } else {
-      localStorage.removeItem("etherview_wallet");
-      console.log('💳 WalletContext - Removed from localStorage');
-    }
-  };
-
-  const handleDisconnect = () => {
+  const setWalletAddress = useCallback((address: string | null) => {
+    if (address !== null && !isAddress(address.trim()))
+      throw new Error("Invalid Ethereum address");
+    const normalized = address ? getAddress(address.trim()) : null;
+    setAddress(normalized);
+    try {
+      if (normalized && rememberWallet())
+        localStorage.setItem("etherview_wallet", normalized);
+      else localStorage.removeItem("etherview_wallet");
+    } catch {}
+  }, []);
+  const handleDisconnect = useCallback(() => {
     setWalletAddress(null);
-    localStorage.removeItem("etherview_wallet");
-    router.push('/');
-  };
-
-  const isConnected = walletAddress !== null;
-
-  const contextValue: WalletContextType = {
-    walletAddress,
-    setWalletAddress: handleSetWalletAddress,
-    handleDisconnect,
-    isConnected,
-  };
-
+    router.push("/");
+  }, [setWalletAddress, router]);
   return (
-    <WalletContext.Provider value={contextValue}>
+    <WalletContext.Provider
+      value={{
+        walletAddress,
+        setWalletAddress,
+        handleDisconnect,
+        isConnected: !!walletAddress,
+        hydrated,
+      }}
+    >
       {children}
     </WalletContext.Provider>
   );
 }
-
-export function useWallet(): WalletContextType {
+export function useWallet() {
   const context = useContext(WalletContext);
-  if (context === undefined) {
-    throw new Error('useWallet must be used within a WalletProvider');
-  }
+  if (!context)
+    throw new Error("useWallet must be used within a WalletProvider");
   return context;
 }

@@ -31,9 +31,9 @@ export class RealSentimentAnalyzer {
     };
 
     this.GLM_API_KEY = this.config.GLM_API_KEY || '';
-    this.GLM_BASE_URL = this.config.GLM_BASE_URL;
+    this.GLM_BASE_URL = this.config.GLM_BASE_URL || 'https://open.bigmodel.cn/api/paas/v4';
     this.OPENAI_API_KEY = this.config.OPENAI_API_KEY || '';
-    this.OPENAI_BASE_URL = this.config.OPENAI_BASE_URL;
+    this.OPENAI_BASE_URL = this.config.OPENAI_BASE_URL || 'https://api.openai.com/v1';
 
     console.log('🔍 RealSentimentAnalyzer initialized:', {
       hasOpenAI: !!this.OPENAI_API_KEY,
@@ -43,7 +43,7 @@ export class RealSentimentAnalyzer {
     });
   }
 
-  async analyzeSentiment(article: RawNewsArticle, opts?: { mode?: 'fast' | 'normal'; maxTokens?: number }): Promise<SentimentResult> {
+  async analyzeSentiment(article: RawNewsArticle, opts?: { mode?: 'fast' | 'normal'; maxTokens?: number }): Promise<SentimentResult & SentimentAnalysis> {
     const text = `${article.title}. ${article.summary || ''}`;
 
     // If we have an API key, use the AI service
@@ -163,7 +163,7 @@ Always respond with valid JSON format in English only.`
               analysis = JSON.parse(jsonText);
               console.log('Successfully extracted and parsed JSON');
             } catch (e2) {
-              console.error('JSON extraction failed:', e2.message);
+              console.error('JSON extraction failed:', e2 instanceof Error ? e2.message : 'Invalid JSON');
               console.error('JSON text preview:', jsonText.substring(0, 500));
             }
           }
@@ -223,7 +223,7 @@ Always respond with valid JSON format in English only.`
         return {
           score: analysis.score || 0,
           confidence: analysis.confidence || 0.5,
-          reasoning: analysis.reasoning || ['Analysis unavailable'],
+          reasoning: Array.isArray(analysis.reasoning) ? analysis.reasoning.map(String) : [String(analysis.reasoning || 'Analysis unavailable')],
           marketEffect: analysis.marketEffect || 'neutral',
           volatility: analysis.volatility || 0.5,
           keywords: analysis.keywords || [],
@@ -258,7 +258,7 @@ Always respond with valid JSON format in English only.`
     return this.fallbackSentimentAnalysis(article);
   }
 
-  private fallbackSentimentAnalysis(article: RawNewsArticle): SentimentResult {
+  private fallbackSentimentAnalysis(article: RawNewsArticle): SentimentResult & SentimentAnalysis {
     const text = (article.title + ' ' + (article.summary || '')).toLowerCase();
     let score = 0;
     let confidence = 0.5;

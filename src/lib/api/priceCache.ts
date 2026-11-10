@@ -27,6 +27,8 @@ export class PriceCache {
   private static instance: PriceCache;
   private prices = new Map<string, TokenPrice>();
   private ethPrice: number | null = null;
+  private ethPriceUpdatedAt = 0;
+  private ethRequest: Promise<number> | null = null;
   private sessionStartTime: number = Date.now();
   private providerStats = new Map<string, { successCount: number; errorCount: number; avgLatency: number }>();
 
@@ -55,62 +57,41 @@ export class PriceCache {
    * Fetch and cache ETH price (only once per session) using proxy API
    */
   async fetchETHPrice(): Promise<number> {
-    if (this.ethPrice !== null) {
-      console.log('💰 PRICE CACHE: Using cached ETH price:', this.ethPrice);
-      return this.ethPrice;
-    }
+    const cached = this.getCachedETHPrice();
+    if (cached !== null) return cached;
+    if (this.ethRequest) return this.ethRequest;
+    const request = this.loadETHPrice();
+    this.ethRequest = request;
+    try { return await request; }
+    finally { if (this.ethRequest === request) this.ethRequest = null; }
+  }
 
-    console.log('💰 PRICE CACHE: Fetching fresh ETH price...');
+  private async loadETHPrice(): Promise<number> {
     try {
-      // Use absolute URL for server-side fetch
       const origin = typeof window !== 'undefined' ? window.location.origin : (process.env.NEXTAUTH_URL || `http://localhost:${process.env.PORT || 3000}`);
-
-      const response = await fetch(`${origin}/api/price-proxy?type=eth&ids=ethereum`, {
-        headers: {
-          'Accept': 'application/json'
-        },
-        signal: AbortSignal.timeout(5000)
+      const response = await fetch(`${origin}/api/price-proxy?type=eth`, {
+        headers: { Accept: 'application/json' }, signal: AbortSignal.timeout(5000)
       });
-
-      if (!response.ok) {
-        console.warn('Price proxy API responded with status:', response.status);
-        // Try alternate providers before final fallback
-        const alt = await this.fetchETHPriceAlternate();
-        if (alt > 0) {
-          this.ethPrice = alt;
-          return alt;
+      if (response.ok) {
+        const data = await response.json();
+        const price = data.ethereum?.usd;
+        if (typeof price === 'number' && Number.isFinite(price) && price > 0) {
+          this.ethPrice = price;
+          this.ethPriceUpdatedAt = Date.now();
+          return price;
         }
-        const fallbackPrice = 3000;
-        this.ethPrice = fallbackPrice;
-        return fallbackPrice;
       }
-
-      const data = await response.json();
-      const price = data.ethereum?.usd;
-
-      if (!price || typeof price !== 'number' || price <= 0) {
-        console.warn('Invalid price data from proxy:', data);
-        const fallbackPrice = 3000;
-        this.ethPrice = fallbackPrice;
-        return fallbackPrice;
-      }
-
-      this.ethPrice = price;
-      console.log('💰 PRICE CACHE: Cached new ETH price:', price);
-      return price;
-    } catch (error) {
-      console.warn('ETH price fetch failed, trying alternate:', error instanceof Error ? error.message : 'Unknown error');
-
-      // Final fallback after alternates
-      const alt = await this.fetchETHPriceAlternate();
-      if (alt > 0) {
-        this.ethPrice = alt;
-        return alt;
-      }
-      const fallbackPrice = 3000;
-      this.ethPrice = fallbackPrice;
-      return fallbackPrice;
+    } catch {
+      // Try independent public providers below.
     }
+    const alternate = await this.fetchETHPriceAlternate();
+    if (Number.isFinite(alternate) && alternate > 0) {
+      this.ethPrice = alternate;
+      this.ethPriceUpdatedAt = Date.now();
+      return alternate;
+    }
+    // Zero means unavailable in the existing pricing contract; never invent a market quote.
+    return 0;
   }
 
   private async fetchETHPriceAlternate(): Promise<number> {
@@ -404,7 +385,7 @@ export class PriceCache {
     // Check cache first
     for (const addr of normalized) {
       const cached = this.prices.get(addr);
-      if (cached) {
+      if (cached && this.isPriceValid(cached)) {
         result[addr] = cached.priceUSD;
       } else {
         missing.push(addr);
@@ -476,7 +457,7 @@ export class PriceCache {
    * Get cached ETH price without fetching
    */
   getCachedETHPrice(): number | null {
-    return this.ethPrice;
+    return this.ethPrice !== null && Date.now() - this.ethPriceUpdatedAt < 2 * 60 * 1000 ? this.ethPrice : null;
   }
 
   /**
@@ -485,7 +466,7 @@ export class PriceCache {
   getCachedTokenPrice(symbol: string, address?: string): number | null {
     const cacheKey = address ? `${address.toLowerCase()}` : symbol.toLowerCase();
     const cached = this.prices.get(cacheKey);
-    return cached?.priceUSD || null;
+    return cached && this.isPriceValid(cached) ? cached.priceUSD : null;
   }
 
   /**
@@ -493,7 +474,8 @@ export class PriceCache {
    */
   hasTokenPrice(symbol: string, address?: string): boolean {
     const cacheKey = address ? `${address.toLowerCase()}` : symbol.toLowerCase();
-    return this.prices.has(cacheKey);
+    const cached = this.prices.get(cacheKey);
+    return !!cached && this.isPriceValid(cached);
   }
 
   /**
@@ -503,6 +485,7 @@ export class PriceCache {
     console.log('💰 PRICE CACHE: Clearing all cached prices...');
     this.prices.clear();
     this.ethPrice = null;
+    this.ethPriceUpdatedAt = 0;
     this.sessionStartTime = Date.now();
   }
 
@@ -514,7 +497,7 @@ export class PriceCache {
     const validPrices = Array.from(this.prices.values()).filter(p => this.isPriceValid(p));
 
     return {
-      ethPriceCached: this.ethPrice !== null,
+      ethPriceCached: this.getCachedETHPrice() !== null,
       tokenPricesCount: this.prices.size,
       validPricesCount: validPrices.length,
       sessionDuration: Date.now() - this.sessionStartTime,

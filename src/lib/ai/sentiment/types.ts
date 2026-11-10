@@ -107,8 +107,11 @@ export interface MarketPrediction {
     rsi: number;
     macd: number;
     bollinger: 'Upper' | 'Middle' | 'Lower';
-    support: number;
-    resistance: number;
+    support?: number;
+    resistance?: number;
+    ema20?: number;
+    sma50?: number;
+    volume?: number;
   };
   correlationScore: number;
 }

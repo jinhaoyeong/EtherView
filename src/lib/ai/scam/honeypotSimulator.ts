@@ -1,21 +1,24 @@
 import type { TokenInfo } from './scamFeatures'
 
 export interface HoneypotSimulationResult {
-  canSell: boolean
+  status: 'unavailable'
+  canSell: boolean | null
   revertReason: string | null
-  priceImpactPct: number
-  slippagePct: number
-  gasUsed: number
+  priceImpactPct: number | null
+  slippagePct: number | null
+  gasUsed: number | null
 }
 
 export async function simulateHoneypot(_token: TokenInfo, _ctx?: unknown): Promise<HoneypotSimulationResult> {
   void _token;
   void _ctx;
+  // There is no execution/simulation provider configured. Unknown is not proof of sellability.
   return {
-    canSell: true,
+    status: 'unavailable',
+    canSell: null,
     revertReason: null,
-    priceImpactPct: 5,
-    slippagePct: 3,
-    gasUsed: 120000
+    priceImpactPct: null,
+    slippagePct: null,
+    gasUsed: null
   }
 }

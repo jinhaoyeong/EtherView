@@ -196,7 +196,7 @@ export class APIClient {
   async fetchBatch<T>(
     requests: Array<{
       url: string;
-      options?: Omit<Parameters<typeof this.fetch>[1], 'cacheKey'>;
+      options?: Omit<Parameters<APIClient['fetch']>[1], 'cacheKey'>;
       cacheKey?: string;
     }>
   ): Promise<APIResponse<T>[]> {

@@ -2,6 +2,8 @@ import { extractFeatures, TokenInfo } from './scamFeatures'
 import { applyRules } from './scamRules'
 import { simulateHoneypot } from './honeypotSimulator'
 import { ScamMLModel } from './scamModel'
+import { isWhitelisted } from '../../config/tokenWhitelist'
+import { aiCache, CacheKeys } from '../shared/cache'
 
 export interface ScamDetectionResult {
   tokenAddress: string
@@ -15,7 +17,6 @@ export interface ScamDetectionResult {
 
 export class ScamDetectionEngine {
   async analyzeToken(token: TokenInfo, userAddress: string): Promise<ScamDetectionResult> {
-    const { aiCache, CacheKeys } = await import('../shared/cache')
     const cacheKey = CacheKeys.SCAM_ANALYSIS(token.address)
     const cached = aiCache.get<ScamDetectionResult>(cacheKey)
     if (cached) return cached
@@ -25,17 +26,20 @@ export class ScamDetectionEngine {
     const rules = await applyRules({ ...features })
     const ml = await new ScamMLModel().predictScamProbability({ ...features, rulesScore: rules.score })
 
-    let score = Math.round(0.6 * rules.score + 0.4 * (ml.probability * 100))
-    const trustedSymbols = ['USDC', 'USDT', 'WBTC', 'WETH', 'DAI', 'LINK', 'UNI', 'AAVE', 'COMP']
-    const isTrusted = trustedSymbols.includes((token.symbol || '').toUpperCase())
+    let score = Math.round(rules.score)
+    // Token symbols are user-controlled; trust only known mainnet contracts.
+    const isTrusted = isWhitelisted(token.address)
     if (isTrusted) score = Math.max(0, score - 60)
 
-    if (!simulation.canSell) score = Math.max(score, 90)
+    if (simulation.canSell === false) score = Math.max(score, 90)
     if (rules.signal === 'ESCALATE') score = Math.max(score, 75)
 
     const riskLevel: 'low' | 'medium' | 'high' = score >= 70 ? 'high' : score >= 40 ? 'medium' : 'low'
     const reasons = rules.reasons.length > 0 ? rules.reasons : ['Analyzed']
-    const confidencePct = Math.min(95, Math.max(50, Math.round(ml.confidence)))
+    const marketUnread = features.holderTop1Pct <= 0 && features.taxRatePct <= 0 && features.liquidityUSD <= 0
+    const confidencePct = marketUnread
+      ? Math.min(40, Math.round(ml.confidence))
+      : Math.min(95, Math.max(50, Math.round(ml.confidence)))
 
     const result: ScamDetectionResult = {
       tokenAddress: token.address,

@@ -1,310 +1,248 @@
 "use client";
-
 import { useState } from "react";
-import { useRouter } from "next/navigation";
-import { Card } from "@/components/ui/card";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { DarkModeToggle } from "@/components/shared/dark-mode-toggle";
+import { useQuery } from "@tanstack/react-query";
+import Link from "next/link";
+import { getAddress, isAddress, formatUnits } from "ethers";
 import {
-  AlertTriangle,
   ArrowRight,
-  Search,
-  Eye,
-  BarChart3,
+  ArrowUpRight,
+  ArrowLeftRight,
+  Box,
+  Coins,
+  Flame,
+  Loader2,
   Newspaper,
+  Search,
   ShieldCheck,
-  Activity
+  Waves,
 } from "lucide-react";
-import { DocumentationModal } from "./documentation-modal";
-import { useTranslation } from "@/hooks/use-translation";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
-
-interface LandingPageProps {
-  onWalletConnect: (address: string) => void;
+import { DashboardLayout } from "@/components/layout/dashboard-layout";
+import { useSettings } from "@/hooks/use-settings";
+import { EthereumPrism } from "@/components/shared/ethereum-prism";
+import "./landing-premium.css";
+const examples = [
+  {
+    name: "Vitalik Buterin",
+    subtitle: "vitalik.eth",
+    address: "0xd8dA6BF26964aF9D7eEd9e03E53415D37aA96045",
+    type: "Individual",
+    symbol: "VB",
+  },
+  {
+    name: "Ethereum Foundation",
+    subtitle: "Foundation wallet",
+    address: "0xde0B295669a9FD93d5F28D9Ec85E40f4cb697BAe",
+    type: "Organization",
+    symbol: "EF",
+  },
+  {
+    name: "Uniswap V3",
+    subtitle: "Protocol factory",
+    address: "0x1F98431c8aD98523631AE4a59f267346ea31F984",
+    type: "Contract",
+    symbol: "UNI",
+  },
+];
+async function networkSnapshot(signal: AbortSignal) {
+  const [price, rpc] = await Promise.allSettled([
+    fetch("/api/price-proxy?type=eth", {
+      signal: AbortSignal.any([signal, AbortSignal.timeout(18_000)]),
+    }).then(async (res) => {
+      if (!res.ok) return null;
+      const body = await res.json();
+      const value = Number(body.price ?? body.usd ?? body.ethereum?.usd);
+      return Number.isFinite(value) && value > 0 ? value : null;
+    }),
+    fetch("/api/rpc-proxy", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify([
+        { jsonrpc: "2.0", id: 1, method: "eth_blockNumber", params: [] },
+        { jsonrpc: "2.0", id: 2, method: "eth_gasPrice", params: [] },
+      ]),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(20_000)]),
+    }).then(async (res) => {
+      if (!res.ok) return null;
+      const body = await res.json();
+      if (!Array.isArray(body)) return null;
+      const result = (id: number) =>
+        body.find((x: { id?: number }) => x.id === id)?.result;
+      const block = result(1),
+        gas = result(2);
+      return {
+        block:
+          typeof block === "string" && /^0x[\da-f]+$/i.test(block)
+            ? Number(BigInt(block))
+            : null,
+        gas:
+          typeof gas === "string" && /^0x[\da-f]+$/i.test(gas)
+            ? Number(formatUnits(BigInt(gas), "gwei"))
+            : null,
+      };
+    }),
+  ]);
+  return {
+    price: price.status === "fulfilled" ? price.value : null,
+    block: rpc.status === "fulfilled" ? (rpc.value?.block ?? null) : null,
+    gas: rpc.status === "fulfilled" ? (rpc.value?.gas ?? null) : null,
+  };
 }
-
-export function LandingPage({ onWalletConnect }: LandingPageProps) {
-  const [walletAddress, setWalletAddress] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
+export function LandingPage({
+  onWalletConnect,
+}: {
+  onWalletConnect: (address: string) => void;
+}) {
+  const [address, setAddress] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const router = useRouter();
-  const { t } = useTranslation();
-
-  // Ethereum address validation
-  const isValidEthereumAddress = (address: string): boolean => {
-    return /^0x[a-fA-F0-9]{40}$/.test(address);
-  };
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!walletAddress.trim()) {
-      setError("Please enter a wallet address");
+  const [opening, setOpening] = useState(false);
+  const { settings } = useSettings();
+  const network = useQuery({
+    queryKey: ["network-snapshot"],
+    queryFn: ({ signal }) => networkSnapshot(signal),
+    staleTime: 60_000,
+    retry: false,
+    refetchInterval: settings?.data.autoRefresh ? 60_000 : false,
+  });
+  function open(value: string) {
+    if (!isAddress(value.trim())) {
+      setError(
+        "Enter a valid Ethereum address: 0x followed by 40 hexadecimal characters.",
+      );
       return;
     }
-
-    if (!isValidEthereumAddress(walletAddress)) {
-      setError("Please enter a valid Ethereum address (0x...)");
-      return;
-    }
-
-    setIsLoading(true);
     setError(null);
-
+    setOpening(true);
     try {
-      // Simulate API call to validate and load wallet data
-      await new Promise(resolve => setTimeout(resolve, 1500));
-      onWalletConnect(walletAddress);
-      // Navigate to overview page
-      router.push('/');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load wallet data");
-    } finally {
-      setIsLoading(false);
+      onWalletConnect(getAddress(value.trim()));
+    } catch {
+      setOpening(false);
+      setError("Could not open this address. Please try again.");
     }
-  };
-
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const value = e.target.value;
-    setWalletAddress(value);
-
-    // Clear error when user starts typing
-    if (error) {
-      setError(null);
-    }
-  };
-
-  // Demo wallet addresses for testing
-  const demoWallets = [
-    { address: "0x1234567890123456789012345678901234567890", label: "Mixed Portfolio" },
-    { address: "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd", label: "High Risk" },
-    { address: "0xfedcbafedcbafedcbafedcbafedcbafedcba", label: "Safe Portfolio" }
+  }
+  const metrics = [
+    {
+      name: "ETH price",
+      value: network.data?.price
+        ? new Intl.NumberFormat("en-US", {
+            style: "currency",
+            currency: "USD",
+            maximumFractionDigits: 2,
+          }).format(network.data.price)
+        : null,
+      detail: "Current quote · USD",
+      icon: Coins,
+    },
+    {
+      name: "Gas price",
+      value:
+        network.data?.gas != null
+          ? `${network.data.gas.toLocaleString("en-US", { maximumFractionDigits: 3 })} Gwei`
+          : null,
+      detail: "Standard network gas price",
+      icon: Flame,
+    },
+    {
+      name: "Latest block",
+      value:
+        network.data?.block != null
+          ? network.data.block.toLocaleString("en-US")
+          : null,
+      detail: "Ethereum Mainnet",
+      icon: Box,
+    },
   ];
-
-  const demoWhaleAddress = "0x075e72a5edf65f0a5f44699c7654c1a76941ddc8";
-
-  const connectDemoWhale = async () => {
-    setError(null);
-    if (!isValidEthereumAddress(demoWhaleAddress)) {
-      setError("Demo whale address is invalid");
-      return;
-    }
-    try {
-      setIsLoading(true);
-      setWalletAddress(demoWhaleAddress);
-      await new Promise(resolve => setTimeout(resolve, 500));
-      onWalletConnect(demoWhaleAddress);
-      // Navigate to overview page
-      router.push('/');
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to connect demo whale wallet");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   return (
-    <div className="min-h-screen bg-background relative overflow-hidden">
-      {/* Background Elements */}
-      <div className="absolute inset-0 bg-grid-slate-900/[0.04] bg-[bottom_1px_center] dark:bg-grid-slate-400/[0.05] dark:bg-bottom dark:border-b dark:border-slate-100/5" />
-      <div className="absolute inset-0 bg-gradient-to-t from-background via-background/60 to-background/0 pointer-events-none" />
-      
-      <div className="absolute -top-40 -right-40 w-96 h-96 bg-primary/20 rounded-full blur-3xl opacity-30 dark:opacity-50 mix-blend-multiply dark:mix-blend-normal" />
-      <div className="absolute top-40 -left-20 w-72 h-72 bg-blue-500/20 rounded-full blur-3xl opacity-30 dark:opacity-50 mix-blend-multiply dark:mix-blend-normal" />
-
-      {/* Header */}
-      <div className="absolute top-0 left-0 right-0 p-6 z-50">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="h-8 w-8 bg-primary rounded-lg flex items-center justify-center shadow-lg shadow-primary/20">
-              <Eye className="h-5 w-5 text-primary-foreground" />
-            </div>
-            <span className="text-xl font-bold tracking-tight text-foreground">EtherView</span>
-          </div>
-          <div className="flex items-center space-x-4">
-            <DocumentationModal
-              trigger={
-                <Button variant="ghost" size="sm" className="text-muted-foreground hover:text-foreground font-medium">
-                  Documentation
-                </Button>
-              }
-            />
-            <DarkModeToggle />
-          </div>
-        </div>
-      </div>
-
-      {/* Main Content */}
-      <div className="relative z-10 flex flex-col items-center justify-center min-h-screen px-4 py-20">
-        <div className="w-full max-w-5xl mx-auto text-center space-y-10">
-          
-          {/* Hero Section */}
-          <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-700">
-            <div className="inline-flex items-center rounded-full border border-primary/20 bg-primary/5 px-4 py-1.5 text-sm font-medium text-primary mb-6">
-              <span className="flex h-2 w-2 rounded-full bg-primary mr-2 animate-pulse"></span>
-              v2.0 Now Live
-            </div>
-            <h1 className="text-5xl md:text-7xl lg:text-8xl font-bold tracking-tight text-foreground">
-              Master Your <br />
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary to-blue-600">
-                Ethereum Portfolio
-              </span>
-            </h1>
-            <p className="text-xl md:text-2xl text-muted-foreground max-w-3xl mx-auto leading-relaxed">
-              Real-time analytics, AI-powered scam detection, and whale tracking. 
-              The most powerful way to visualize your on-chain activity.
+    <DashboardLayout walletAddress="" onDisconnect={() => {}}>
+      <div className="ev-discover workspace-page">
+        <section className="ev-discover-hero" aria-labelledby="discover-heading">
+          <div className="ev-discover-copy">
+            <p className="ev-kicker"><span /> THE ETHEREUM EXPLORER</p>
+            <h1 id="discover-heading">A clearer view<br />of <span>Ethereum.</span></h1>
+            <p className="ev-discover-description">
+              Every wallet has a story. Explore the assets, activity, and signals behind any public address.
             </p>
-          </div>
-
-          {/* Main Input Section */}
-          <div className="w-full max-w-3xl mx-auto mt-16 animate-in fade-in slide-in-from-bottom-8 duration-1000 delay-100">
-            <div className="relative group">
-              <div className="absolute -inset-1 bg-gradient-to-r from-primary to-blue-600 rounded-2xl blur opacity-25 group-hover:opacity-50 transition duration-1000 group-hover:duration-200"></div>
-              <Card className="relative p-3 bg-card/95 backdrop-blur-xl border-border/50 shadow-2xl rounded-2xl">
-                <form onSubmit={handleSubmit} className="flex flex-col md:flex-row gap-3">
-                  <div className="relative flex-grow">
-                    <Search className="absolute left-5 top-1/2 transform -translate-y-1/2 text-muted-foreground h-6 w-6" />
-                    <Input
-                      type="text"
-                      placeholder={t('landing.placeholder')}
-                      value={walletAddress}
-                      onChange={handleInputChange}
-                      className="pl-14 pr-4 h-16 text-lg border-transparent bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 placeholder:text-muted-foreground/50"
-                      disabled={isLoading}
-                    />
-                  </div>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        type="submit"
-                        size="lg"
-                        className="h-16 px-10 text-lg font-medium rounded-xl shadow-lg hover:shadow-primary/25 transition-all duration-300"
-                        disabled={isLoading || !walletAddress.trim()}
-                      >
-                        {isLoading ? (
-                          <div className="flex items-center gap-2">
-                            <div className="animate-spin rounded-full h-5 w-5 border-2 border-primary-foreground/30 border-t-primary-foreground"></div>
-                            <span>{t('landing.scanning')}</span>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-2">
-                            <span>{t('landing.analyze')}</span>
-                            <ArrowRight className="h-5 w-5" />
-                          </div>
-                        )}
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>{t('landing.analyze_tooltip')}</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </form>
-              </Card>
-            </div>
-
-            {error && (
-              <Alert variant="destructive" className="mt-6 animate-in fade-in slide-in-from-top-2">
-                <AlertTriangle className="h-5 w-5" />
-                <AlertDescription className="text-base">{error}</AlertDescription>
-              </Alert>
-            )}
-
-          {/* Quick Access Pills */}
-          <div className="mt-8 flex flex-wrap items-center justify-center gap-3 animate-in fade-in duration-1000 delay-200">
-            <span className="text-base text-muted-foreground mr-2">{t('landing.demo')}</span>
-            {demoWallets.map((demo, index) => (
-              <Tooltip key={index}>
-                <TooltipTrigger asChild>
-                  <button
-                    onClick={() => setWalletAddress(demo.address)}
-                    className="px-4 py-1.5 text-sm font-medium rounded-full bg-muted/50 hover:bg-muted border border-transparent hover:border-primary/20 transition-all text-muted-foreground hover:text-foreground"
-                  >
-                    {demo.label}
+            <div className="ev-address-entry" id="wallet-search">
+              <form onSubmit={(e) => { e.preventDefault(); open(address); }}>
+                <label htmlFor="wallet-address">Your next discovery starts here</label>
+                <div className="ev-address-field">
+                  <Search size={19} strokeWidth={1.6} aria-hidden="true" />
+                  <input
+                    id="wallet-address"
+                    aria-label="Ethereum wallet address"
+                    placeholder="Enter an Ethereum address, 0x…"
+                    value={address}
+                    onChange={(e) => { setAddress(e.target.value); setError(null); }}
+                    aria-invalid={!!error}
+                    aria-describedby={error ? "wallet-error" : "wallet-start-hint"}
+                    autoComplete="off"
+                    spellCheck={false}
+                    disabled={opening}
+                  />
+                  <button type="submit" disabled={opening} aria-label="View portfolio">
+                    {opening ? <Loader2 size={20} className="animate-spin" /> : <ArrowRight size={20} />}
                   </button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>{t('landing.demo')} {demo.label}</p>
-                </TooltipContent>
-              </Tooltip>
+                </div>
+              </form>
+              {error ? (
+                <p className="input-error" id="wallet-error" role="alert">{error}</p>
+              ) : (
+                <p id="wallet-start-hint" className="ev-address-hint"><ShieldCheck size={13} /> Read-only. No connection or signature needed.</p>
+              )}
+            </div>
+            <div className="ev-quick-start">
+              <span>Take a look around</span>
+              <button disabled={opening} onClick={() => open(examples[0].address)}>vitalik.eth <ArrowUpRight size={13} /></button>
+            </div>
+          </div>
+          <div className="ev-discover-art" aria-hidden="true">
+            <div className="ev-art-topline"><span>ETHEREUM</span><span>EST. 2015</span></div>
+            <div className="ev-prism-stage"><EthereumPrism /></div>
+            <div className="ev-art-footline"><span>Open by nature.<br /><strong>Clear by design.</strong></span><span className="ev-art-chain">01<small>MAINNET</small></span></div>
+          </div>
+        </section>
+
+        <section className="ev-network-strip" aria-label="Ethereum network snapshot">
+          <div className="ev-network-title"><span className="ev-network-dot" /><span>On the network<small>Ethereum mainnet</small></span></div>
+          {metrics.map(({ name, value, detail, icon: Icon }) => (
+            <div className="ev-network-stat" key={name}>
+              <div className="ev-network-stat-label"><Icon size={14} strokeWidth={1.7} /><span>{name}</span></div>
+              <strong>{network.isPending ? <span className="ev-stat-skeleton" /> : (value ?? "Unavailable")}</strong>
+              <small>{detail}</small>
+            </div>
+          ))}
+        </section>
+
+        <section className="ev-wallet-discovery" aria-labelledby="public-wallets-heading">
+          <div className="ev-section-heading">
+            <div><p className="ev-kicker">A PLACE TO START</p><h2 id="public-wallets-heading">Follow the addresses you know.</h2></div>
+            <span>Public wallets & contracts</span>
+          </div>
+          <div className="ev-public-wallets">
+            {examples.map((ex, i) => (
+              <button className={`ev-public-wallet ev-public-wallet-${i + 1}`} key={ex.address} disabled={opening} onClick={() => open(ex.address)} aria-label={`Explore ${ex.name}`}>
+                <div className="ev-public-wallet-top"><span className="ev-wallet-avatar">{ex.symbol}</span><ArrowUpRight size={20} strokeWidth={1.6} /></div>
+                <div className="ev-public-wallet-name"><strong>{ex.name}</strong><span>{ex.subtitle}</span></div>
+                <div className="ev-public-wallet-bottom"><span className="mono">{ex.address.slice(0, 8)}…{ex.address.slice(-6)}</span><small>{ex.type}</small></div>
+              </button>
             ))}
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  onClick={connectDemoWhale}
-                  className="px-4 py-1.5 text-sm font-medium rounded-full bg-muted/50 hover:bg-muted border border-transparent hover:border-primary/20 transition-all text-muted-foreground hover:text-foreground"
-                >
-                  {t('landing.best_demo')}
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{t('landing.best_demo')}</p>
-              </TooltipContent>
-            </Tooltip>
           </div>
-          </div>
+        </section>
 
-          {/* Stats Row */}
-          <div className="grid grid-cols-3 gap-12 max-w-4xl mx-auto pt-12 animate-in fade-in duration-1000 delay-300">
-            <div className="text-center space-y-2">
-              <div className="text-4xl font-bold text-foreground">10M+</div>
-              <div className="text-sm text-muted-foreground uppercase tracking-wider font-medium">{t('landing.stats.analyzed')}</div>
-            </div>
-            <div className="text-center space-y-2 border-x border-border/50">
-              <div className="text-4xl font-bold text-foreground">99.9%</div>
-              <div className="text-sm text-muted-foreground uppercase tracking-wider font-medium">{t('landing.stats.accuracy')}</div>
-            </div>
-            <div className="text-center space-y-2">
-              <div className="text-4xl font-bold text-foreground">24/7</div>
-              <div className="text-sm text-muted-foreground uppercase tracking-wider font-medium">{t('landing.stats.realtime')}</div>
-            </div>
+        <section className="ev-research" aria-label="Explore analytics tools">
+          <div className="ev-research-intro"><p className="ev-kicker">LOOK A LITTLE CLOSER</p><h2>Beyond the balance.</h2><p>Follow the movement.<br />Understand the context.</p></div>
+          <div className="ev-research-links">
+            {[
+              { title: "Transactions", copy: "Trace transfers and fees", href: "/transactions", icon: ArrowLeftRight },
+              { title: "Whale watch", copy: "Follow larger movements", href: "/whale", icon: Waves },
+              { title: "Token risk", copy: "Read the contract signals", href: "/scam", icon: ShieldCheck },
+              { title: "News & sentiment", copy: "Stay close to the conversation", href: "/news", icon: Newspaper },
+            ].map(({ title, copy, href, icon: Icon }) => (
+              <Link href={href} className="ev-research-link" key={href}><Icon size={21} strokeWidth={1.5} /><span><strong>{title}</strong><small>{copy}</small></span><ArrowUpRight size={16} /></Link>
+            ))}
           </div>
-        </div>
-
-        {/* Features Strip */}
-        <div className="w-full max-w-7xl mx-auto mt-20 pt-10 border-t border-border/40 animate-in fade-in duration-1000 delay-500">
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-8">
-            <div className="flex flex-col items-center text-center p-6 hover:bg-muted/30 rounded-2xl transition-colors">
-              <div className="p-3 bg-red-500/10 rounded-xl mb-4 text-red-500">
-                <ShieldCheck className="h-8 w-8" />
-              </div>
-              <h3 className="font-bold mb-2 text-lg">{t('landing.features.scam')}</h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">{t('landing.features.scam_desc')}</p>
-            </div>
-            <div className="flex flex-col items-center text-center p-6 hover:bg-muted/30 rounded-2xl transition-colors">
-              <div className="p-3 bg-blue-500/10 rounded-xl mb-4 text-blue-500">
-                <BarChart3 className="h-8 w-8" />
-              </div>
-              <h3 className="font-bold mb-2 text-lg">{t('landing.features.analytics')}</h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">{t('landing.features.analytics_desc')}</p>
-            </div>
-            <div className="flex flex-col items-center text-center p-6 hover:bg-muted/30 rounded-2xl transition-colors">
-              <div className="p-3 bg-green-500/10 rounded-xl mb-4 text-green-500">
-                <Activity className="h-8 w-8" />
-              </div>
-              <h3 className="font-bold mb-2 text-lg">{t('landing.features.whale')}</h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">{t('landing.features.whale_desc')}</p>
-            </div>
-            <div className="flex flex-col items-center text-center p-6 hover:bg-muted/30 rounded-2xl transition-colors">
-              <div className="p-3 bg-purple-500/10 rounded-xl mb-4 text-purple-500">
-                <Newspaper className="h-8 w-8" />
-              </div>
-              <h3 className="font-bold mb-2 text-lg">{t('landing.features.sentiment')}</h3>
-              <p className="text-sm text-muted-foreground leading-relaxed">{t('landing.features.sentiment_desc')}</p>
-            </div>
-          </div>
-        </div>
-
-        {/* Footer */}
-        <footer className="w-full text-center py-8 text-sm text-muted-foreground animate-in fade-in duration-1000 delay-700">
-          <p>© {new Date().getFullYear()} EtherView. All rights reserved.</p>
-        </footer>
+        </section>
+        <p className="ev-discover-footnote">Public data, with perspective. Coverage varies by provider; valuations are estimates.</p>
       </div>
-    </div>
+    </DashboardLayout>
   );
 }

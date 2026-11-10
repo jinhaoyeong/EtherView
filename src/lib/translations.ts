@@ -881,8 +881,8 @@ export const translations = {
 export function useTranslation(language: string) {
   return {
     t: (key: string): string => {
-      const langTranslations = translations[language as keyof typeof translations] || translations.en;
-      return langTranslations[key as keyof typeof translations.en] || key;
+      const langTranslations: Record<string, string> = translations[language as keyof typeof translations] || translations.en;
+      return langTranslations[key] || (translations.en as Record<string, string>)[key] || key;
     },
     currentLanguage: language,
   };

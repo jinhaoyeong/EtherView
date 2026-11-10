@@ -1,36 +1,30 @@
 "use client";
 
+import Link from "next/link";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ResearchHeader } from "@/components/shared/research-header";
 import { DashboardLayout } from "@/components/layout/dashboard-layout";
-import { useState, useEffect } from "react";
 import { useWallet } from "@/contexts/wallet-context";
 import { WalletAPI } from "@/lib/api/wallet";
 import { useAutoRefresh } from "@/hooks/use-auto-refresh";
-import { Card } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Alert, AlertDescription } from "@/components/ui/alert";
 import {
-  Fish,
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   ArrowUpRight,
   ArrowDownLeft,
+  ArrowRight,
   RefreshCw,
   ExternalLink,
-  Activity,
-  BarChart3,
-  Zap,
   AlertTriangle,
-  DollarSign,
-  Wallet,
-  Building
 } from "lucide-react";
-import { useTranslation } from "@/hooks/use-translation";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@/components/ui/tooltip";
 
-interface WhaleMovement {
+type Movement = {
   id: string;
   hash: string;
   timestamp: number;
@@ -40,455 +34,346 @@ interface WhaleMovement {
   valueUSD: number;
   tokenSymbol: string;
   tokenAddress?: string;
-  movementType: 'deposit' | 'withdrawal' | 'transfer' | 'defi_interaction';
+  movementType: "deposit" | "withdrawal" | "transfer" | "defi_interaction";
   exchangeName?: string;
-  confidence: number;
-  reasoning: string[];
-  impactScore: number;
-  enhancedData: {
-    isWhaleWallet: boolean;
-    whaleScore: number;
-    hasHistory: boolean;
-    relatedTransactions: number;
-  };
-  dataSource: 'alchemy' | 'etherscan' | 'combined';
-}
-
-interface WhaleSummary {
-  totalEvents: number;
-  exchangeInflows: number;
-  exchangeOutflows: number;
-  avgImpact: number;
-  totalVolumeUSD: number;
-}
+  reasoning?: string[];
+};
+const short = (address: string) =>
+  address ? `${address.slice(0, 6)}…${address.slice(-4)}` : "Unknown";
+const usd = (value: number) =>
+  new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+    notation: value >= 1e6 ? "compact" : "standard",
+  }).format(value);
+const date = (timestamp: number) =>
+  new Date(timestamp < 1e12 ? timestamp * 1000 : timestamp).toLocaleString(
+    undefined,
+    { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" },
+  );
 
 export default function WhaleMovement() {
-  const { walletAddress, handleDisconnect, isConnected } = useWallet();
-  const { t } = useTranslation();
-
-  // Debug logging
-  console.log('🐋 Whale page - Wallet state from useWallet:', {
-    walletAddress,
-    isConnected,
-    hasAddress: !!walletAddress,
-    addressLength: walletAddress?.length,
-    localStorage: typeof window !== 'undefined' ? localStorage.getItem("etherview_wallet") : 'N/A'
-  });
-  const [whaleMovements, setWhaleMovements] = useState<WhaleMovement[]>([]);
-  const [summary, setSummary] = useState<WhaleSummary>({
-    totalEvents: 0,
-    exchangeInflows: 0,
-    exchangeOutflows: 0,
-    avgImpact: 0,
-    totalVolumeUSD: 0
-  });
+  const { walletAddress, handleDisconnect } = useWallet();
+  const [movements, setMovements] = useState<Movement[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [threshold, setThreshold] = useState("20000");
+  const [direction, setDirection] = useState("all");
+  const [scanned, setScanned] = useState(0);
+  const request = useRef(0);
+
+  const load = useCallback(async (address: string) => {
+    const requestId = ++request.current;
+    setLoading(true);
+    setError(null);
+    try {
+      // A single combined request avoids refetching overlapping history prefixes.
+      const transactions = await WalletAPI.fetchTransactions(address, 1, 300);
+      const result: Movement[] = await WalletAPI.detectWhaleMovements(
+        transactions,
+        20000,
+      );
+      if (requestId !== request.current) return;
+      setScanned(transactions.length);
+      setMovements(result);
+    } catch (err) {
+      if (requestId === request.current)
+        setError(
+          err instanceof Error
+            ? err.message
+            : "Large transfers could not be loaded. Please try again.",
+        );
+    } finally {
+      if (requestId === request.current) {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    }
+  }, []);
 
   useEffect(() => {
-    if (walletAddress && walletAddress.trim() !== '') {
-      loadWhaleMovements(walletAddress);
-    } else {
+    setMovements([]);
+    setScanned(0);
+    if (walletAddress) void load(walletAddress);
+    else {
       setLoading(false);
-      setError(t('whale.enterAddress'));
-    }
-  }, [walletAddress]);
-
-  const loadWhaleMovements = async (address: string) => {
-    try {
-      const t0 = typeof performance !== 'undefined' ? performance.now() : Date.now();
-      setLoading(true);
       setError(null);
-
-      console.log('🐋 Loading whale movements for wallet:', address);
-
-      let transactions: any[] = [];
-      const pageCount = 3;
-      const offset = 200;
-      for (let page = 1; page <= pageCount; page++) {
-        const txs = await WalletAPI.fetchTransactions(address, page, offset);
-        transactions = transactions.concat(txs);
-      }
-      const realWhaleMovements = await WalletAPI.detectWhaleMovements(transactions, 20000);
-
-      console.log('🐋 Found whale movements:', realWhaleMovements.length);
-
-      // Calculate summary statistics
-      const whaleSummary = {
-        totalEvents: realWhaleMovements.length,
-        exchangeInflows: realWhaleMovements.filter(m => m.movementType === 'deposit').length,
-        exchangeOutflows: realWhaleMovements.filter(m => m.movementType === 'withdrawal').length,
-        avgImpact: realWhaleMovements.length > 0
-          ? Math.round(realWhaleMovements.reduce((sum, m) => sum + m.impactScore, 0) / realWhaleMovements.length)
-          : 0,
-        totalVolumeUSD: realWhaleMovements.reduce((sum, m) => sum + m.valueUSD, 0)
-      };
-
-      setWhaleMovements(realWhaleMovements);
-      setSummary(whaleSummary);
-      const t1 = typeof performance !== 'undefined' ? performance.now() : Date.now();
-      const duration = Math.round((t1 - t0));
-      try {
-        await fetch('/api/metrics', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            name: 'tab_whale_loaded',
-            metric: 'ui_whale_switch_time_ms',
-            value: duration,
-            payload: { address, events: realWhaleMovements.length }
-          })
-        })
-      } catch {}
-    } catch (err) {
-      console.error('❌ Failed to load whale movements:', err);
-      setError(t('whale.loadError'));
-      try {
-        await fetch('/api/metrics', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ name: 'tab_whale_failed', counter: 'ui_tab_load_failed', payload: { address } })
-        })
-      } catch {}
-    } finally {
-      setLoading(false);
     }
+    const lifecycle = request;
+    return () => {
+      lifecycle.current++;
+    };
+  }, [walletAddress, load]);
+  const refresh = async () => {
+    if (!walletAddress || loading || refreshing) return;
+    setRefreshing(true);
+    WalletAPI.clearTransactionCache(walletAddress);
+    await load(walletAddress);
   };
+  useAutoRefresh(refresh, !!walletAddress, 300);
 
-  const handleRefresh = async () => {
-    if (walletAddress) {
-      setRefreshing(true);
-      await loadWhaleMovements(walletAddress);
-      setRefreshing(false);
-    }
-  };
-
-  // 60s default for whale movements (needs to be fast)
-  useAutoRefresh(handleRefresh, !!walletAddress, 60);
-
-  const formatAddress = (address: string) => {
-    return `${address.slice(0, 6)}...${address.slice(-4)}`;
-  };
-
-  const formatDate = (timestamp: number) => {
-    return new Date(timestamp).toLocaleString();
-  };
-
-  const getMovementIcon = (type: WhaleMovement['movementType']) => {
-    switch (type) {
-      case 'deposit': return <ArrowDownLeft className="h-4 w-4 text-green-600" />;
-      case 'withdrawal': return <ArrowUpRight className="h-4 w-4 text-red-600" />;
-      case 'transfer': return <Wallet className="h-4 w-4 text-blue-600" />;
-      case 'defi_interaction': return <Activity className="h-4 w-4 text-purple-600" />;
-      default: return <Fish className="h-4 w-4" />;
-    }
-  };
-
-  const getMovementTypeColor = (type: WhaleMovement['movementType']) => {
-    switch (type) {
-      case 'deposit': return 'text-green-600';
-      case 'withdrawal': return 'text-red-600';
-      case 'transfer': return 'text-blue-600';
-      case 'defi_interaction': return 'text-purple-600';
-      default: return 'text-gray-600';
-    }
-  };
-
-  const getMovementLabel = (type: WhaleMovement['movementType']) => {
-    switch (type) {
-      case 'deposit': return t('whale.type.deposit');
-      case 'withdrawal': return t('whale.type.withdrawal');
-      case 'transfer': return t('whale.type.transfer');
-      case 'defi_interaction': return t('whale.type.defi_interaction');
-      default: return type;
-    }
-  };
-
-  const getConfidenceColor = (confidence: number) => {
-    if (confidence >= 80) return 'text-green-600';
-    if (confidence >= 60) return 'text-yellow-600';
-    if (confidence >= 40) return 'text-orange-600';
-    return 'text-red-600';
-  };
-
-  const getImpactColor = (impact: number) => {
-    if (impact >= 70) return 'text-red-600';
-    if (impact >= 50) return 'text-orange-600';
-    if (impact >= 30) return 'text-yellow-600';
-    return 'text-blue-600';
-  };
-
-  if (loading) {
-    return (
-      <DashboardLayout walletAddress={walletAddress || ''} onDisconnect={handleDisconnect}>
-        <div className="space-y-6">
-          <div className="animate-pulse">
-            <div className="h-8 bg-muted rounded w-64 mb-6"></div>
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-6">
-              <div className="h-24 bg-muted rounded"></div>
-              <div className="h-24 bg-muted rounded"></div>
-              <div className="h-24 bg-muted rounded"></div>
-              <div className="h-24 bg-muted rounded"></div>
-            </div>
-            {[...Array(3)].map((_, i) => (
-              <div key={i} className="h-32 bg-muted rounded mb-4"></div>
-            ))}
-          </div>
-        </div>
-      </DashboardLayout>
-    );
-  }
+  const incoming = useCallback(
+    (movement: Movement) =>
+      movement.to?.toLowerCase() === walletAddress?.toLowerCase(),
+    [walletAddress],
+  );
+  const visible = useMemo(
+    () =>
+      movements.filter(
+        (movement) =>
+          movement.valueUSD >= Number(threshold) &&
+          (direction === "all" ||
+            (direction === "in" ? incoming(movement) : !incoming(movement))),
+      ),
+    [movements, threshold, direction, incoming],
+  );
+  const inflow = visible
+    .filter(incoming)
+    .reduce((sum, movement) => sum + movement.valueUSD, 0);
+  const outflow = visible
+    .filter((movement) => !incoming(movement))
+    .reduce((sum, movement) => sum + movement.valueUSD, 0);
+  const volume = inflow + outflow;
 
   return (
-    <DashboardLayout walletAddress={walletAddress || ''} onDisconnect={handleDisconnect}>
-      <div className="space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Fish className="h-6 w-6 text-primary" />
+    <DashboardLayout
+      walletAddress={walletAddress || ""}
+      onDisconnect={handleDisconnect}
+    >
+      <div className="workspace-page research-page space-y-7">
+        <ResearchHeader
+          index="03"
+          category="Follow the flow"
+          title="Large transfers"
+          description="Track the movements that matter within this wallet’s available history."
+          tone="lilac"
+        >
+          <Button
+            variant="outline"
+            onClick={refresh}
+            disabled={!walletAddress || loading || refreshing}
+          >
+            <RefreshCw
+              className={`mr-2 h-4 w-4 ${refreshing ? "animate-spin" : ""}`}
+            />
+            Refresh history
+          </Button>
+        </ResearchHeader>
+
+        {scanned > 0 && !error && (
+          <dl className="research-statbar">
+            {[
+              {
+                label: "Matching transfers",
+                value: visible.length.toLocaleString(),
+              },
+              { label: "Transfer volume", value: usd(volume) },
+              { label: "Incoming volume", value: usd(inflow) },
+              { label: "Outgoing volume", value: usd(outflow) },
+            ].map((item) => (
+              <div key={item.label} className="surface-panel px-5 py-4">
+                <dt className="text-xs text-muted-foreground">{item.label}</dt>
+                <dd className="balance-amount mt-2 text-2xl font-semibold tracking-tight tabular-nums">
+                  {item.value}
+                </dd>
+              </div>
+            ))}
+          </dl>
+        )}
+
+        <section className="surface-panel research-ledger whale-ledger overflow-hidden">
+          <div className="flex flex-col justify-between gap-4 border-b border-border p-5 sm:flex-row sm:items-center">
             <div>
-              <h1 className="text-2xl font-bold text-foreground">{t('whale.title')}</h1>
-              <p className="text-sm text-muted-foreground">
-                {t('whale.subtitle')}
+              <h2 className="text-base font-medium">Large transfer activity</h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {scanned
+                  ? `${scanned} records checked · ${visible.length} matches`
+                  : "Up to 300 available records · USD estimates use current prices"}
               </p>
             </div>
+            <div className="flex flex-wrap gap-2">
+              <Select value={threshold} onValueChange={setThreshold}>
+                <SelectTrigger
+                  className="w-40"
+                  aria-label="Minimum transfer value"
+                >
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="20000">Over $20,000</SelectItem>
+                  <SelectItem value="100000">Over $100,000</SelectItem>
+                  <SelectItem value="1000000">Over $1 million</SelectItem>
+                </SelectContent>
+              </Select>
+              <Select value={direction} onValueChange={setDirection}>
+                <SelectTrigger className="w-36" aria-label="Transfer direction">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All directions</SelectItem>
+                  <SelectItem value="in">Incoming</SelectItem>
+                  <SelectItem value="out">Outgoing</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
           </div>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="outline"
-                onClick={handleRefresh}
-                disabled={refreshing}
-              >
-                <RefreshCw className={`h-4 w-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
-                {t('common.refresh')}
+
+          {error && (
+            <div
+              role="status"
+              className="flex items-start gap-3 border border-border bg-muted/30 p-5 text-sm"
+            >
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+              <div>
+                <h3 className="font-medium">
+                  History is temporarily unavailable
+                </h3>
+                <p className="mt-2 max-w-2xl text-muted-foreground">{error}</p>
+                <Button
+                  variant="link"
+                  onClick={refresh}
+                  className="h-auto px-0 py-2"
+                >
+                  Try again
+                </Button>
+              </div>
+            </div>
+          )}
+
+          {!walletAddress ? (
+            <div className="research-empty border-b border-border px-6 py-14">
+              <p className="eyebrow">No address selected</p>
+              <h3 className="mt-3 text-lg font-medium">
+                Select a wallet to inspect its transfers.
+              </h3>
+              <p className="mt-2 max-w-md text-sm leading-relaxed text-muted-foreground">
+                This register follows one public Ethereum address. It does not
+                represent a network-wide whale feed.
+              </p>
+              <Button asChild variant="outline" className="mt-5">
+                <Link href="/">
+                  Select an address
+                  <ArrowRight className="ml-2 h-4 w-4" />
+                </Link>
               </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{t('whale.refresh_tooltip')}</p>
-            </TooltipContent>
-          </Tooltip>
-        </div>
-
-        {/* Summary Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-          <Card className="bg-card border-border p-6 shadow-lg">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-muted-foreground text-sm">{t('whale.totalEvents')}</p>
-                <p className="text-2xl font-bold text-foreground">{summary.totalEvents}</p>
-              </div>
-              <Fish className="text-3xl text-blue-600" />
             </div>
-          </Card>
-
-          <Card className="bg-card border-border p-6 shadow-lg">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-muted-foreground text-sm">{t('whale.exchangeInflows')}</p>
-                <p className="text-2xl font-bold text-green-600">{summary.exchangeInflows}</p>
-              </div>
-              <ArrowDownLeft className="text-3xl text-green-600" />
+          ) : loading && !movements.length ? (
+            <div
+              role="status"
+              aria-label="Scanning large transfers"
+              className="space-y-2 p-5"
+            >
+              {Array.from({ length: 5 }, (_, index) => (
+                <div key={index} className="h-12 animate-pulse bg-muted" />
+              ))}
+              <p className="text-xs text-muted-foreground">
+                Reading available transfer records…
+              </p>
             </div>
-          </Card>
-
-          <Card className="bg-card border-border p-6 shadow-lg">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-muted-foreground text-sm">{t('whale.exchangeOutflows')}</p>
-                <p className="text-2xl font-bold text-red-600">{summary.exchangeOutflows}</p>
-              </div>
-              <ArrowUpRight className="text-3xl text-red-600" />
+          ) : visible.length === 0 && !error ? (
+            <div className="research-empty border-b border-border px-6 py-14">
+              <h3 className="font-medium">
+                No transfers match these criteria.
+              </h3>
+              <p className="mt-2 max-w-lg text-sm leading-relaxed text-muted-foreground">
+                No transfers above this threshold were found in the available
+                history. Try a lower threshold or another direction.
+              </p>
             </div>
-          </Card>
-
-          <Card className="bg-card border-border p-6 shadow-lg">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-muted-foreground text-sm">{t('whale.avgImpact')}</p>
-                <p className="text-2xl font-bold">{summary.avgImpact.toFixed(0)}</p>
-              </div>
-              <BarChart3 className="text-3xl text-purple-600" />
-            </div>
-          </Card>
-        </div>
-
-        {/* Volume Summary */}
-        <Card className="bg-card border-border p-6 shadow-lg">
-          <div className="flex items-center gap-2 mb-4">
-            <DollarSign className="h-5 w-5 text-green-600" />
-            <h3 className="text-lg font-semibold">{t('whale.totalVolume')}</h3>
-          </div>
-          <p className="text-3xl font-bold text-green-600">
-            ${summary.totalVolumeUSD.toLocaleString()}
-          </p>
-        </Card>
-
-        {/* Whale Events List */}
-        {error ? (
-          <Alert variant="destructive">
-            <AlertTriangle className="h-4 w-4" />
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        ) : whaleMovements.length === 0 ? (
-          <Card className="bg-card border-border p-12 shadow-lg text-center">
-            <Fish className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-foreground mb-2">{t('whale.noData')}</h3>
-            <p className="text-muted-foreground">
-            {t('whale.noDataDesc')}
-            </p>
-          </Card>
-        ) : (
-          <div className="space-y-4">
-            {whaleMovements.map((movement) => (
-              <Card
-                key={movement.id}
-                className="bg-card border-border p-6 shadow-lg hover:shadow-lg transition-shadow"
-              >
-                <div className="flex items-start justify-between">
-                  <div className="flex items-start gap-4 flex-1">
-                    <div className="mt-1">
-                      {getMovementIcon(movement.movementType)}
-                    </div>
-
-                    <div className="flex-1 min-w-0">
-                      {/* Header */}
-                      <div className="flex items-center gap-3 mb-3">
-                        <h4 className="font-medium text-foreground">
-                          {movement.tokenSymbol} {t('whale.title')}
-                        </h4>
-
-                        <Badge
-                          variant="outline"
-                          className={getMovementTypeColor(movement.movementType)}
+          ) : (
+            visible.length > 0 && (
+              <div className="overflow-x-auto border-b border-border">
+                <table className="w-full min-w-[760px] text-left text-sm">
+                  <thead className="border-b border-border text-[11px] uppercase tracking-wider text-muted-foreground">
+                    <tr>
+                      <th className="px-5 py-3 font-medium">Date & time</th>
+                      <th className="px-5 py-3 font-medium">
+                        Direction / asset
+                      </th>
+                      <th className="px-5 py-3 font-medium">From</th>
+                      <th className="px-5 py-3 font-medium">To</th>
+                      <th className="px-5 py-3 text-right font-medium">
+                        Amount
+                      </th>
+                      <th className="px-5 py-3 text-right font-medium">
+                        Est. USD
+                      </th>
+                      <th>
+                        <span className="sr-only">Explorer</span>
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-border">
+                    {visible.map((movement, index) => {
+                      const isIncoming = incoming(movement);
+                      return (
+                        <tr
+                          key={`${movement.id}:${movement.tokenAddress || movement.tokenSymbol}:${index}`}
+                          className="hover:bg-muted/30"
                         >
-                          {getMovementLabel(movement.movementType)}
-                        </Badge>
-
-                        {movement.exchangeName && (
-                          <Badge variant="secondary" className="text-xs">
-                            <Building className="h-3 w-3 mr-1" />
-                            {movement.exchangeName}
-                          </Badge>
-                        )}
-
-                        <div className="ml-auto">
-                          <Badge
-                            variant="outline"
-                            className={`text-xs ${getImpactColor(movement.impactScore)}`}
+                          <td className="px-5 py-4 text-xs text-muted-foreground">
+                            {date(movement.timestamp)}
+                          </td>
+                          <td className="px-5 py-4">
+                            <div className="flex items-center gap-2">
+                              {isIncoming ? (
+                                <ArrowDownLeft className="h-3.5 w-3.5 text-primary" />
+                              ) : (
+                                <ArrowUpRight className="h-3.5 w-3.5 text-muted-foreground" />
+                              )}
+                              <span>
+                                {isIncoming ? "Received" : "Sent"}{" "}
+                                {movement.tokenSymbol}
+                              </span>
+                            </div>
+                          </td>
+                          <td
+                            className="px-5 py-4 font-mono text-xs"
+                            title={movement.from}
                           >
-                            Impact: {movement.impactScore}
-                          </Badge>
-                        </div>
-                      </div>
-
-                      {/* Transaction Details */}
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm mb-4">
-                        <div>
-                          <span className="text-muted-foreground">From:</span>
-                          <div className="font-mono text-foreground">
-                            {formatAddress(movement.from)}
-                          </div>
-                        </div>
-
-                        <div>
-                          <span className="text-muted-foreground">To:</span>
-                          <div className="font-mono text-foreground">
-                            {formatAddress(movement.to)}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm mb-4">
-                        <div>
-                          <span className="text-muted-foreground">{t('table.value')}:</span>
-                          <div className="font-medium text-foreground">
-                            {movement.tokenSymbol}: {parseFloat(movement.value).toLocaleString()}
-                            <span className="ml-2 text-green-600">
-                              (${movement.valueUSD.toLocaleString()})
-                            </span>
-                          </div>
-                        </div>
-
-                        <div>
-                          <span className="text-muted-foreground">{t('whale.confidence')}:</span>
-                          <div className="flex items-center gap-2">
-                            <div className={`font-medium ${getConfidenceColor(movement.confidence)}`}>
-                              {movement.confidence}%
-                            </div>
-                            <div className="w-20 bg-gray-200 rounded-full h-2">
-                              <div
-                                className={`h-2 rounded-full ${getConfidenceColor(movement.confidence).replace('text-', 'bg-')}`}
-                                style={{ width: `${movement.confidence}%` }}
-                              ></div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-
-                      {/* Why It Matters Section */}
-                      <div className="mb-4">
-                        <div className="flex items-center gap-2 mb-2">
-                          <Zap className="h-4 w-4 text-primary" />
-                          <span className="font-medium text-sm">{t('whale.whyMatters')}</span>
-                        </div>
-                        <div className="text-sm text-muted-foreground space-y-1">
-                          {movement.reasoning.map((reason, index) => (
-                            <div key={index}>• {reason}</div>
-                          ))}
-                        </div>
-                      </div>
-
-                      {/* Enhanced Data */}
-                      {movement.enhancedData && (
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-muted-foreground mb-4">
-                          <div>
-                            <span>{t('whale.whaleWallet')}</span>
-                            <Badge variant={movement.enhancedData.isWhaleWallet ? "default" : "secondary"}>
-                              {movement.enhancedData.isWhaleWallet ? t('common.yes') || 'Yes' : t('common.no') || 'No'}
-                            </Badge>
-                          </div>
-                          <div>
-                            <span>{t('whale.whaleScore')}</span>
-                            <Badge variant="outline">{movement.enhancedData.whaleScore}/100</Badge>
-                          </div>
-                          <div>
-                            <span>{t('whale.relatedTx')}</span>
-                            <span>{movement.enhancedData.relatedTransactions}</span>
-                          </div>
-                        </div>
-                      )}
-
-                      <div className="flex items-center justify-between text-xs text-muted-foreground">
-                        <span>{t('transactions.hash') || 'Hash'}: {formatAddress(movement.hash)}</span>
-                        <span>{formatDate(movement.timestamp)}</span>
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2">
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => window.open(`https://etherscan.io/tx/${movement.hash}`, '_blank')}
-                        >
-                          <ExternalLink className="h-4 w-4 mr-2" />
-                          {t('whale.viewEtherscan')}
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>{t('common.etherscan')}</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </div>
-                </div>
-              </Card>
-            ))}
-          </div>
-        )}
+                            {short(movement.from)}
+                          </td>
+                          <td
+                            className="px-5 py-4 font-mono text-xs"
+                            title={movement.to}
+                          >
+                            {short(movement.to)}
+                          </td>
+                          <td className="balance-amount px-5 py-4 text-right font-mono text-xs tabular-nums">
+                            {Number(movement.value).toLocaleString("en-US", {
+                              maximumSignificantDigits: 8,
+                            })}
+                          </td>
+                          <td className="balance-amount px-5 py-4 text-right font-mono tabular-nums">
+                            {usd(movement.valueUSD)}
+                          </td>
+                          <td className="px-4 py-4">
+                            <a
+                              href={`https://etherscan.io/tx/${movement.hash}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              aria-label={`View transfer ${short(movement.hash)} on Etherscan`}
+                              className="inline-flex p-2 text-muted-foreground hover:text-primary"
+                            >
+                              <ExternalLink className="h-3.5 w-3.5" />
+                            </a>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )
+          )}
+        </section>
+        <p className="max-w-3xl text-xs leading-relaxed text-muted-foreground">
+          A large transfer does not establish exchange activity, ownership, or
+          market direction. Values are current-price estimates, not the value at
+          the time of transfer.
+        </p>
       </div>
     </DashboardLayout>
   );

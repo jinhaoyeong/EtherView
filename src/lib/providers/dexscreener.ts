@@ -89,6 +89,8 @@ class DexscreenerProvider {
   private readonly BASE_URL = 'https://api.dexscreener.com/latest/dex';
   private readonly CACHE_DURATION = 5 * 60 * 1000; // 5 minutes for DEX data
   private cache = new Map<string, DexCacheEntry>();
+  private missingUntil = new Map<string, number>();
+  private inflight = new Map<string, Promise<TokenPriceInfo | null>>();
   private readonly MAX_REQUESTS_PER_MINUTE = 30;
   private requestCount = 0;
   private lastRequestReset = Date.now();
@@ -148,18 +150,14 @@ class DexscreenerProvider {
    * Find the best pair with highest liquidity for a token
    */
   private findBestPair(pairs: DexPair[], tokenAddress: string): DexPair | null {
-    // Filter pairs that include our token
-    const validPairs = pairs.filter(pair =>
-      pair.baseToken.address.toLowerCase() === tokenAddress.toLowerCase() ||
-      pair.quoteToken.address.toLowerCase() === tokenAddress.toLowerCase()
+    // priceUsd describes the BASE token only. Never apply it to a quote token,
+    // or match an identically addressed asset on another chain.
+    const candidates = pairs.filter(pair =>
+      pair.chainId === 'ethereum' &&
+      pair.baseToken?.address?.toLowerCase() === tokenAddress.toLowerCase() &&
+      Number.isFinite(Number(pair.priceUsd)) && Number(pair.priceUsd) > 0
     );
-
-    if (validPairs.length === 0) {
-      return null;
-    }
-
-    const basePairs = validPairs.filter(p => p.baseToken.address.toLowerCase() === tokenAddress.toLowerCase());
-    const candidates = basePairs.length > 0 ? basePairs : validPairs;
+    if (candidates.length === 0) return null;
     candidates.sort((a, b) => {
       const aLiquidity = a.liquidity?.usd || 0;
       const bLiquidity = b.liquidity?.usd || 0;
@@ -237,6 +235,28 @@ class DexscreenerProvider {
    * Get token pairs and price for a specific token address
    */
   async getTokenPairs(address: string): Promise<TokenPriceInfo | null> {
+    if (!/^0x[\da-f]{40}$/i.test(address)) return null;
+    address = address.toLowerCase();
+    const cached = this.getCachedPrice(address);
+    if (cached) return cached;
+    if ((this.missingUntil.get(address) || 0) > Date.now()) return null;
+    const pending = this.inflight.get(address);
+    if (pending) return pending;
+    const task = this.loadTokenPairs(address);
+    this.inflight.set(address, task);
+    try {
+      const result = await task;
+      if (!result) {
+        if (this.missingUntil.size >= 1000) this.missingUntil.delete(this.missingUntil.keys().next().value!);
+        this.missingUntil.set(address, Date.now() + 30_000);
+      }
+      return result;
+    } finally {
+      if (this.inflight.get(address) === task) this.inflight.delete(address);
+    }
+  }
+
+  private async loadTokenPairs(address: string): Promise<TokenPriceInfo | null> {
     if (this.isBlocked()) {
       return null;
     }
@@ -284,13 +304,6 @@ class DexscreenerProvider {
       return null;
     }
     this.requestCount++;
-
-    // Check cache first
-    const cached = this.getCachedPrice(address);
-    if (cached) {
-      console.log(`📦 Dexscreener Cache hit for ${address.slice(0, 8)}...`);
-      return cached;
-    }
 
     console.log(`🔍 Fetching Dexscreener data for ${address.slice(0, 8)}...`);
 
@@ -445,6 +458,7 @@ class DexscreenerProvider {
    */
   clearCache(): void {
     this.cache.clear();
+    this.missingUntil.clear();
     console.log('🗑️ Dexscreener cache cleared');
   }
 

@@ -4,7 +4,7 @@
  */
 
 import { EnrichedNewsArticle } from './realNewsAggregator';
-import { SentimentAnalysis } from './realSentimentAnalyzer';
+import { SentimentAnalysis } from './sentimentAnalyzer';
 import { MarketPrediction } from './types';
 
 // MarketPrediction interface is now imported from types.ts
@@ -69,48 +69,23 @@ export class RealPredictiveModel {
       );
 
       if (!response.ok) {
-        if (response.status === 429) {
-          console.warn('CoinGecko API rate limited, using cached/mock data');
-        } else {
-          console.warn('CoinGecko API error:', response.status, response.statusText);
-        }
-        // Return mock data on failure
-        return {
-          currentPrice: 3500, // Mock ETH price
-          priceChange24h: 2.5,
-          volume24h: 15000000000,
-          marketCap: 420000000000,
-          prices: [3450, 3475, 3500, 3525, 3500], // Mock price data
-          high24h: 3600,
-          low24h: 3400
-        };
+        console.warn('CoinGecko market data is unavailable:', response.status);
+        return null;
       }
 
       const data = await response.json();
-
-      // Validate data structure for simple price endpoint
-      if (!data.ethereum) {
-        console.warn('Invalid market data structure, using fallback');
-        return {
-          currentPrice: 3500,
-          priceChange24h: 0,
-          volume24h: 15000000000,
-          marketCap: 420000000000,
-          prices: [3450, 3475, 3500, 3525, 3500],
-          high24h: 3600,
-          low24h: 3400
-        };
-      }
-
       const ethData = data.ethereum;
+      const currentPrice = ethData?.usd;
+      if (typeof currentPrice !== 'number' || !Number.isFinite(currentPrice) || currentPrice <= 0) {
+        console.warn('CoinGecko market data did not include an ETH price');
+        return null;
+      }
+      const observed = (value: unknown) => typeof value === 'number' && Number.isFinite(value) ? value : undefined;
       return {
-        currentPrice: ethData.usd,
-        priceChange24h: ethData.usd_24h_change || 0,
-        volume24h: ethData.usd_24h_vol || 15000000000,
-        marketCap: ethData.usd_market_cap || 420000000000,
-        prices: [3450, 3475, 3500, 3525, 3500], // Mock price data since simple endpoint doesn't provide sparkline
-        high24h: ethData.usd * 1.03, // Estimate high as 3% above current
-        low24h: ethData.usd * 0.97  // Estimate low as 3% below current
+        currentPrice,
+        priceChange24h: observed(ethData.usd_24h_change),
+        volume24h: observed(ethData.usd_24h_vol),
+        marketCap: observed(ethData.usd_market_cap),
       };
     } catch (error) {
       console.error('Error fetching market data:', error);
@@ -306,7 +281,7 @@ Return prediction in this exact JSON format:
 
       // Intelligent fallback based on content analysis
       const lowerContent = content.toLowerCase();
-      let trend = 'Neutral';
+      let trend: MarketPrediction['trend'] = 'Neutral';
       let confidence = 0.5;
       const positiveFactors: string[] = [];
       const negativeFactors: string[] = [];
@@ -361,7 +336,7 @@ Return prediction in this exact JSON format:
     }
   }
 
-  private async calculateTechnicalIndicators() {
+  private async calculateTechnicalIndicators(): Promise<MarketPrediction['technicalIndicators']> {
     try {
       // Try multiple technical analysis sources
       const indicators = await this.fetchFromTAAPI();
@@ -375,17 +350,7 @@ Return prediction in this exact JSON format:
 
     } catch (error) {
       console.error('Error fetching technical indicators:', error);
-      // Return neutral indicators directly instead of recursive call
-      return {
-        rsi: 50,
-        macd: 0,
-        bollinger: 'Middle',
-        support: 3400,
-        resistance: 3600,
-        ema20: 3500,
-        sma50: 3500,
-        volume: 50
-      };
+      return undefined;
     }
   }
 
@@ -425,7 +390,7 @@ Return prediction in this exact JSON format:
         throw new Error('Invalid TAAPI response format');
       }
 
-      // Calculate support and resistance from recent price action
+      // Include support and resistance only when they come from observed prices.
       const supportResistance = await this.calculateSupportResistance();
 
       return {
@@ -436,8 +401,7 @@ Return prediction in this exact JSON format:
           data.data.bb?.valueUpperBand,
           data.data.bb?.valueLowerBand
         ),
-        support: supportResistance.support,
-        resistance: supportResistance.resistance,
+        ...supportResistance,
         // Additional indicators
         ema20: data.data.ema20?.value || 0,
         sma50: data.data.sma50?.value || 0,
@@ -449,7 +413,7 @@ Return prediction in this exact JSON format:
     }
   }
 
-  private async fetchAlternativeTechnicalIndicators() {
+  private async fetchAlternativeTechnicalIndicators(): Promise<MarketPrediction['technicalIndicators']> {
     try {
       // Use CoinGecko's OHLC data for basic technical analysis
       const response = await fetch(
@@ -470,38 +434,27 @@ Return prediction in this exact JSON format:
 
     } catch (error) {
       console.error('Alternative technical indicators failed:', error);
-      // Return neutral indicators directly
-      return {
-        rsi: 50,
-        macd: 0,
-        bollinger: 'Middle',
-        support: 3400,
-        resistance: 3600,
-        ema20: 3500,
-        sma50: 3500,
-        volume: 50
-      };
+      return undefined;
     }
   }
 
-  private calculateIndicatorsFromOHLC(ohlcData: number[][]) {
+  private calculateIndicatorsFromOHLC(ohlcData: number[][]): MarketPrediction['technicalIndicators'] {
     try {
       // Extract closing prices
       const closes = ohlcData.map(candle => candle[4]);
 
       if (closes.length < 14) {
-        return this.calculateTechnicalIndicators(0, 0.5); // Neutral indicators on fallback
+        return undefined; // Insufficient observed price history
       }
 
       // Calculate RSI
       const rsi = this.calculateRSI(closes);
 
-      // Calculate support/resistance from recent lows/highs
-      const recentLows = closes.slice(-20).sort((a, b) => a - b);
-      const recentHighs = closes.slice(-20).sort((a, b) => b - a);
-
-      const support = recentLows?.[0] || closes[closes.length - 1] * 0.95;
-      const resistance = recentHighs?.[0] || closes[closes.length - 1] * 1.05;
+      // Support and resistance are the observed low and high, never a percentage of the last price.
+      const recentPrices = closes.slice(-20).filter(price => Number.isFinite(price) && price > 0);
+      if (recentPrices.length === 0) return undefined;
+      const support = Math.min(...recentPrices);
+      const resistance = Math.max(...recentPrices);
 
       // Simple MACD calculation
       const ema12 = this.calculateEMA(closes, 12);
@@ -534,17 +487,7 @@ Return prediction in this exact JSON format:
       };
     } catch (error) {
       console.error('OHLC calculation failed:', error);
-      // Return neutral indicators directly
-      return {
-        rsi: 50,
-        macd: 0,
-        bollinger: 'Middle',
-        support: 3400,
-        resistance: 3600,
-        ema20: 3500,
-        sma50: 3500,
-        volume: 50
-      };
+      return undefined;
     }
   }
 
@@ -583,23 +526,23 @@ Return prediction in this exact JSON format:
     return ema;
   }
 
-  private async calculateSupportResistance() {
+  private async calculateSupportResistance(): Promise<{ support: number; resistance: number } | null> {
     try {
       // Fetch recent price data for support/resistance calculation
       const response = await fetch(
         'https://api.coingecko.com/api/v3/coins/ethereum/market_chart?vs_currency=usd&days=7&interval=hourly'
       );
 
-      if (!response.ok) {
-        throw new Error('Failed to fetch price data');
-      }
+      if (!response.ok) return null;
 
       const data = await response.json();
-      const prices = data.prices.map((p: number[]) => p[1]);
+      const prices = Array.isArray(data?.prices)
+        ? data.prices
+            .map((point: unknown) => Array.isArray(point) ? point[1] : undefined)
+            .filter((price: unknown): price is number => typeof price === 'number' && Number.isFinite(price) && price > 0)
+        : [];
 
-      if (prices.length < 24) {
-        return { support: 0, resistance: 0 };
-      }
+      if (prices.length < 24) return null;
 
       // Find local minima and maxima for support/resistance
       const supportLevels: number[] = [];
@@ -624,72 +567,19 @@ Return prediction in this exact JSON format:
       }
 
       const support = supportLevels.length > 0
-        ? Math.max(...supportLevels.slice(-3)) // Last 3 support levels
-        : prices[prices.length - 1] * 0.95;
+        ? Math.max(...supportLevels.slice(-3))
+        : Math.min(...prices);
 
       const resistance = resistanceLevels.length > 0
-        ? Math.min(...resistanceLevels.slice(-3)) // Last 3 resistance levels
-        : prices[prices.length - 1] * 1.05;
+        ? Math.min(...resistanceLevels.slice(-3))
+        : Math.max(...prices);
 
       return { support, resistance };
 
     } catch (error) {
       console.error('Support/resistance calculation failed:', error);
-      return { support: 0, resistance: 0 };
+      return null;
     }
-  }
-
-  private calculateTechnicalIndicators(sentimentScore: number, volatility: number): TechnicalIndicators {
-    // Calculate technical indicators based on sentiment and market data
-    const trend = Math.abs(sentimentScore);
-    const momentum = sentimentScore * 100; // Convert to -100 to 100 scale
-
-    // Calculate RSI based on sentiment
-    // Strong bullish sentiment = high RSI (above 70), strong bearish = low RSI (below 30)
-    let rsi = 50 + (sentimentScore * 50); // Maps -1 to 1 -> 0 to 100
-    rsi = Math.max(0, Math.min(100, rsi));
-
-    // Calculate MACD based on momentum
-    const macd = momentum * 0.5; // Scale MACD based on sentiment momentum
-
-    // Determine Bollinger Band position based on volatility and trend
-    let bollinger: 'Upper' | 'Middle' | 'Lower' = 'Middle';
-    if (volatility > 0.6) {
-      // High volatility - likely at upper or lower band
-      bollinger = sentimentScore > 0.1 ? 'Upper' : 'Lower';
-    } else if (trend > 0.3) {
-      // Strong trend with low volatility
-      bollinger = sentimentScore > 0 ? 'Upper' : 'Lower';
-    }
-
-    // Calculate dynamic support and resistance levels based on sentiment
-    const basePrice = 3500; // Base ETH price for calculation
-    const strength = Math.abs(sentimentScore);
-    const support = sentimentScore > 0
-      ? basePrice * (1 - strength * 0.1)  // Support below current price in uptrend
-      : basePrice * (1 - strength * 0.15); // Stronger support in downtrend
-
-    const resistance = sentimentScore > 0
-      ? basePrice * (1 + strength * 0.15) // Higher resistance in uptrend
-      : basePrice * (1 + strength * 0.1);  // Lower resistance in downtrend
-
-    // Calculate moving averages based on trend
-    const ema20 = basePrice * (1 + sentimentScore * 0.05);
-    const sma50 = basePrice * (1 + sentimentScore * 0.03);
-
-    // Volume indicator based on volatility and sentiment strength
-    const volume = volatility * 100; // 0-100 scale
-
-    return {
-      rsi: Math.round(rsi),
-      macd: Math.round(macd * 100) / 100,
-      bollinger,
-      support: Math.round(support),
-      resistance: Math.round(resistance),
-      ema20: Math.round(ema20),
-      sma50: Math.round(sma50),
-      volume: Math.round(volume)
-    };
   }
 
   private getBollingerPosition(middle: number, upper: number, lower: number): 'Upper' | 'Middle' | 'Lower' {
@@ -698,27 +588,16 @@ Return prediction in this exact JSON format:
     return 'Middle';
   }
 
-  private async calculateHistoricalCorrelation(sentimentMetrics: any): Promise<number> {
-    // In a real implementation, this would:
-    // 1. Fetch historical sentiment data
-    // 2. Fetch corresponding price movements
-    // 3. Calculate correlation coefficient
-    // 4. Account for lag effects
-
-    // For now, return a simplified correlation based on sentiment metrics
-    const { momentum, volatility } = sentimentMetrics;
-
-    // Higher correlation with strong momentum and low volatility
-    const correlation = (Math.abs(momentum) * 0.6) + ((1 - volatility) * 0.4);
-
-    return Math.max(-1, Math.min(1, correlation));
+  private async calculateHistoricalCorrelation(_sentimentMetrics: unknown): Promise<number> {
+    // Historical price/sentiment observations are not collected yet. Do not fabricate correlation.
+    return 0;
   }
 
   private extractTopEntities(articlesWithSentiment: Array<{ article: EnrichedNewsArticle; sentiment: SentimentAnalysis }>) {
     const entityMap = new Map<string, { count: number; sentiment: number; relevance: number }>();
 
     articlesWithSentiment.forEach(({ article, sentiment }) => {
-      (sentiment.entities || []).forEach(entity => {
+      (article.onChainMetadata?.mentionedTokens || []).map(name => ({ name, relevance: 1, sentiment: sentiment.score })).forEach(entity => {
         const existing = entityMap.get(entity.name);
         const weight = entity.relevance * article.sourceTrust;
 
@@ -787,8 +666,8 @@ Return prediction in this exact JSON format:
       positiveFactors.push('Network upgrades and improvements enhancing utility');
     }
     if (themes.hasMarketAdoption) {
-      positiveFactors.push('Increasing user adoption and transaction activity');
-      reasoningPoints.push('On-chain metrics showing healthy network activity');
+      positiveFactors.push('Coverage mentions adoption or network activity');
+      reasoningPoints.push('Adoption language appears in the available articles');
     }
     if (themes.hasPriceAction) {
       if (avgSentiment > 0) {
@@ -920,18 +799,11 @@ Return prediction in this exact JSON format:
       },
       riskFactors: riskFactors.slice(0, 6),
       marketSignals: {
-        volume: avgSentiment > 0.2 ? 'High' : avgSentiment < -0.2 ? 'Low' : 'Medium',
+        volume: 'Medium',
         volatility: Math.abs(avgSentiment) > 0.3 ? 'High' : Math.abs(avgSentiment) > 0.15 ? 'Medium' : 'Low',
         momentum: avgSentiment > 0.15 ? 'Strong' : avgSentiment < -0.15 ? 'Weak' : 'Moderate'
       },
-      technicalIndicators: {
-        rsi: Math.round(50 + (avgSentiment * 30)),
-        macd: Math.round(avgSentiment * 1000) / 10,
-        bollinger: avgSentiment > 0.2 ? 'Upper' : avgSentiment < -0.2 ? 'Lower' : 'Middle',
-        support: 3400,
-        resistance: 3600
-      },
-      correlationScore: Math.min(0.8, Math.abs(avgSentiment) * 0.7 + (sources.highTrustCount / sources.sourceCount) * 0.3)
+      correlationScore: 0
     };
   }
 

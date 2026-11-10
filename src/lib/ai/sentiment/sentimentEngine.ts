@@ -113,6 +113,8 @@ export class SentimentAnalysisEngine {
 
           console.log(`🧠 Analyzing sentiment for ${limitedArticles.length} articles (${fast ? 'cost saver 5' : 'up to 10'} articles)`);
 
+          const articleKey = limitedArticles.map(article => article.id).join('|');
+
           // Step 2: Parallel processing of sentiment analysis and social signals
           console.log('🧠 Step 2: Performing AI sentiment analysis on articles...');
           const sentimentAnalysesPromise = (async () => {
@@ -133,7 +135,7 @@ export class SentimentAnalysisEngine {
           const [sentimentAnalyses, socialSignals] = await Promise.all([
             sentimentAnalysesPromise,
             performanceManager.executeWithCaching(
-              `social_signals_${Date.now()}`,
+              `social_signals_${articleKey}`,
               () => realSocialAggregator.analyzeInfluencerSignals(enrichedArticles, []),
               20 * 60 * 1000, // 20 minutes for social signals
               forceRefresh
@@ -149,7 +151,7 @@ export class SentimentAnalysisEngine {
           // Step 4: Generate comprehensive market prediction using ML
           console.log('🔮 Step 3: Generating market predictions using ML and AI...');
           const prediction = await performanceManager.executeWithCaching(
-            `market_prediction_${Date.now()}`,
+            `market_prediction_${articleKey}`,
             () => realPredictiveModel.generateMarketPrediction(
               analyzedArticles.map(a => ({ article: a, sentiment: a.sentiment }))
             ),
